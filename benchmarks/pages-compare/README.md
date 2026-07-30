@@ -2,9 +2,9 @@
 
 This benchmark renders the same small Pages Router workload in:
 
-- Next.js 16.2.12 with React 19.2.7;
-- Vinext 1.0.0-beta.4 with React 19.2.7; and
-- the current local Nextane checkout with Octane 0.1.19.
+- Next.js 16.2.12 with React 19.2.8;
+- Vinext 1.0.0-beta.4 with React 19.2.8; and
+- the current local Nextane checkout with Octane 0.1.21.
 
 Each page uses server-side props, renders the same heading, timestamp, counter,
 and 20 list rows, then hydrates the counter in the browser.

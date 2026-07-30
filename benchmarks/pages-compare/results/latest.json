@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-30T18:03:22.433Z",
+  "generatedAt": "2026-07-30T18:41:55.281Z",
   "methodology": {
     "buildRuns": 7,
     "buildMeasurementsReused": false,
@@ -11,64 +11,64 @@
   },
   "system": {
     "platform": "darwin arm64",
-    "node": "v22.22.0",
+    "node": "v26.5.1",
     "cpu": "Apple M4",
     "logicalCpus": 10,
     "memoryBytes": 17179869184
   },
   "versions": {
     "nextjs": "16.2.12",
-    "react": "19.2.7",
+    "react": "19.2.8",
     "vinext": "1.0.0-beta.4",
     "vinextCommit": "npm package",
-    "octane": "0.1.19",
-    "nextaneCommit": "678940d+dirty"
+    "octane": "0.1.21",
+    "nextaneCommit": "b98e895+dirty"
   },
   "projects": {
     "nextjs": {
       "build": {
         "runs": [
-          1129.9,
-          1159.4,
-          1116.9,
-          1503.9,
-          1120.6,
-          1092.7,
-          1082.5
+          1061.1,
+          974,
+          1178.3,
+          959.6,
+          1083.7,
+          1001.2,
+          1103.9
         ],
-        "mean": 1172.3,
-        "median": 1120.6,
-        "min": 1082.5,
-        "max": 1503.9,
-        "stddev": 148.3
+        "mean": 1051.7,
+        "median": 1061.1,
+        "min": 959.6,
+        "max": 1178.3,
+        "stddev": 78.5
       },
       "artifacts": {
         "client": {
           "raw": 402220,
-          "gzip": 128236,
+          "gzip": 128250,
           "files": 16,
           "fileNames": [
-            "OcpgrIr0CRFECQroaO2Jh/_buildManifest.js",
-            "OcpgrIr0CRFECQroaO2Jh/_clientMiddlewareManifest.js",
-            "OcpgrIr0CRFECQroaO2Jh/_ssgManifest.js",
-            "chunks/0xce80o9ye3o4.js",
-            "chunks/10dejet16_g7b.js",
-            "chunks/1646pv3p7z828.js",
-            "chunks/1hcdqbss0mrr0.js",
+            "TVmfxMq1qZIbpcLQEzl37/_buildManifest.js",
+            "TVmfxMq1qZIbpcLQEzl37/_clientMiddlewareManifest.js",
+            "TVmfxMq1qZIbpcLQEzl37/_ssgManifest.js",
+            "chunks/04ip6yitqrs23.js",
+            "chunks/0gd9zh5gx0sct.js",
+            "chunks/13hlworp-jt90.js",
+            "chunks/20l_wv5e0rgwo.js",
             "chunks/2ab09u_hj4vcf.js",
-            "chunks/2el4rsh2lsiv4.js",
+            "chunks/2bcaxs9_-v1ky.js",
             "chunks/2l2zj5v8ol-z8.js",
-            "chunks/3jcdn7fen80as.js",
-            "chunks/3luxm299rt6zg.js",
+            "chunks/3hrn95__awqw4.js",
             "chunks/3thc12vwhj_j3.js",
-            "chunks/turbopack-1keeb59403qcz.js",
-            "chunks/turbopack-28j03aw7duiwt.js",
-            "chunks/turbopack-3uaj2zcmbw_rb.js"
+            "chunks/3uag1te8t3tha.js",
+            "chunks/turbopack-0eoe3ppfgh9-y.js",
+            "chunks/turbopack-2-dbe31rk1g-1.js",
+            "chunks/turbopack-35ygy9kk6hrl3.js"
           ]
         },
         "server": {
           "raw": 157626,
-          "gzip": 50090,
+          "gzip": 50237,
           "files": 16,
           "fileNames": [
             "chunks/ssr/[root-of-the-server]__031ppiv._.js",
@@ -97,153 +97,153 @@
         "requestedJs": {
           "files": 8,
           "raw": 362380,
-          "gzip": 112544,
+          "gzip": 112589,
           "urls": [
             {
-              "url": "/_next/static/chunks/1646pv3p7z828.js",
+              "url": "/_next/static/chunks/13hlworp-jt90.js",
               "raw": 14478,
-              "gzip": 5340
+              "gzip": 5326
             },
             {
-              "url": "/_next/static/chunks/1hcdqbss0mrr0.js",
-              "raw": 16957,
-              "gzip": 6188
-            },
-            {
-              "url": "/_next/static/OcpgrIr0CRFECQroaO2Jh/_buildManifest.js",
-              "raw": 336,
-              "gzip": 211
-            },
-            {
-              "url": "/_next/static/chunks/turbopack-3uaj2zcmbw_rb.js",
+              "url": "/_next/static/chunks/turbopack-35ygy9kk6hrl3.js",
               "raw": 10516,
-              "gzip": 4131
+              "gzip": 4122
             },
             {
-              "url": "/_next/static/chunks/turbopack-28j03aw7duiwt.js",
+              "url": "/_next/static/chunks/04ip6yitqrs23.js",
+              "raw": 16957,
+              "gzip": 6177
+            },
+            {
+              "url": "/_next/static/TVmfxMq1qZIbpcLQEzl37/_buildManifest.js",
+              "raw": 336,
+              "gzip": 218
+            },
+            {
+              "url": "/_next/static/chunks/turbopack-0eoe3ppfgh9-y.js",
               "raw": 10517,
-              "gzip": 4130
+              "gzip": 4121
             },
             {
-              "url": "/_next/static/OcpgrIr0CRFECQroaO2Jh/_ssgManifest.js",
+              "url": "/_next/static/TVmfxMq1qZIbpcLQEzl37/_ssgManifest.js",
               "raw": 76,
               "gzip": 60
             },
             {
-              "url": "/_next/static/OcpgrIr0CRFECQroaO2Jh/_clientMiddlewareManifest.js",
+              "url": "/_next/static/TVmfxMq1qZIbpcLQEzl37/_clientMiddlewareManifest.js",
               "raw": 96,
               "gzip": 66
             },
             {
-              "url": "/_next/static/chunks/3jcdn7fen80as.js",
+              "url": "/_next/static/chunks/0gd9zh5gx0sct.js",
               "raw": 309404,
-              "gzip": 92418
+              "gzip": 92499
             }
           ]
         },
         "resourceTiming": {
           "resources": [
             {
-              "name": "http://127.0.0.1:4211/_next/static/chunks/1646pv3p7z828.js",
-              "transferSize": 5640,
-              "encodedBodySize": 5340,
+              "name": "http://127.0.0.1:4211/_next/static/chunks/13hlworp-jt90.js",
+              "transferSize": 5626,
+              "encodedBodySize": 5326,
               "decodedBodySize": 14478
             },
             {
-              "name": "http://127.0.0.1:4211/_next/static/chunks/turbopack-3uaj2zcmbw_rb.js",
-              "transferSize": 4431,
-              "encodedBodySize": 4131,
-              "decodedBodySize": 10516
-            },
-            {
-              "name": "http://127.0.0.1:4211/_next/static/chunks/3jcdn7fen80as.js",
-              "transferSize": 92718,
-              "encodedBodySize": 92418,
+              "name": "http://127.0.0.1:4211/_next/static/chunks/0gd9zh5gx0sct.js",
+              "transferSize": 92799,
+              "encodedBodySize": 92499,
               "decodedBodySize": 309404
             },
             {
-              "name": "http://127.0.0.1:4211/_next/static/chunks/1hcdqbss0mrr0.js",
-              "transferSize": 6488,
-              "encodedBodySize": 6188,
+              "name": "http://127.0.0.1:4211/_next/static/chunks/turbopack-35ygy9kk6hrl3.js",
+              "transferSize": 4422,
+              "encodedBodySize": 4122,
+              "decodedBodySize": 10516
+            },
+            {
+              "name": "http://127.0.0.1:4211/_next/static/chunks/04ip6yitqrs23.js",
+              "transferSize": 6477,
+              "encodedBodySize": 6177,
               "decodedBodySize": 16957
             },
             {
-              "name": "http://127.0.0.1:4211/_next/static/OcpgrIr0CRFECQroaO2Jh/_buildManifest.js",
+              "name": "http://127.0.0.1:4211/_next/static/TVmfxMq1qZIbpcLQEzl37/_buildManifest.js",
               "transferSize": 636,
               "encodedBodySize": 336,
               "decodedBodySize": 336
             },
             {
-              "name": "http://127.0.0.1:4211/_next/static/chunks/turbopack-28j03aw7duiwt.js",
-              "transferSize": 4430,
-              "encodedBodySize": 4130,
+              "name": "http://127.0.0.1:4211/_next/static/chunks/turbopack-0eoe3ppfgh9-y.js",
+              "transferSize": 4421,
+              "encodedBodySize": 4121,
               "decodedBodySize": 10517
             },
             {
-              "name": "http://127.0.0.1:4211/_next/static/OcpgrIr0CRFECQroaO2Jh/_ssgManifest.js",
+              "name": "http://127.0.0.1:4211/_next/static/TVmfxMq1qZIbpcLQEzl37/_ssgManifest.js",
               "transferSize": 376,
               "encodedBodySize": 76,
               "decodedBodySize": 76
             },
             {
-              "name": "http://127.0.0.1:4211/_next/static/OcpgrIr0CRFECQroaO2Jh/_clientMiddlewareManifest.js",
+              "name": "http://127.0.0.1:4211/_next/static/TVmfxMq1qZIbpcLQEzl37/_clientMiddlewareManifest.js",
               "transferSize": 396,
               "encodedBodySize": 96,
               "decodedBodySize": 96
             }
           ],
           "navigation": {
-            "transferSize": 1025,
-            "encodedBodySize": 725,
+            "transferSize": 1032,
+            "encodedBodySize": 732,
             "decodedBodySize": 2229
           }
         },
         "html": {
           "raw": 2229,
-          "gzip": 725
+          "gzip": 732
         }
       },
       "requests": {
-        "requestsPerSecond": 3058.4,
-        "meanLatency": 5.2,
-        "p50Latency": 4.3,
-        "p95Latency": 10.4,
-        "p99Latency": 13.7,
+        "requestsPerSecond": 4021.5,
+        "meanLatency": 4,
+        "p50Latency": 3.4,
+        "p95Latency": 7.2,
+        "p99Latency": 11.8,
         "rounds": [
           {
-            "requestsPerSecond": 1887.0459863596207,
-            "meanLatency": 8.467018672999977,
-            "p50Latency": 5.298500000004424,
-            "p95Latency": 17.488917000002402,
-            "p99Latency": 111.20149999999558
+            "requestsPerSecond": 3897.2186524781114,
+            "meanLatency": 4.0963159599999415,
+            "p50Latency": 3.6440829999992275,
+            "p95Latency": 7.450582999998005,
+            "p99Latency": 11.848625000005995
           },
           {
-            "requestsPerSecond": 3058.3662468082857,
-            "meanLatency": 5.21697489100002,
-            "p50Latency": 4.322290999996767,
-            "p95Latency": 10.403958000002604,
-            "p99Latency": 20.254582999994454
+            "requestsPerSecond": 3368.028234180684,
+            "meanLatency": 4.734596837999969,
+            "p50Latency": 4.02733299999818,
+            "p95Latency": 9.365749999997206,
+            "p99Latency": 14.306416999999783
           },
           {
-            "requestsPerSecond": 2817.7275423543274,
-            "meanLatency": 5.673141749000017,
-            "p50Latency": 4.980790999994497,
-            "p95Latency": 11.175125000001572,
-            "p99Latency": 13.71004200000607
+            "requestsPerSecond": 4349.531235577808,
+            "meanLatency": 3.6636471240001627,
+            "p50Latency": 3.3931250000023283,
+            "p95Latency": 6.054208000001381,
+            "p99Latency": 8.533709000003
           },
           {
-            "requestsPerSecond": 4012.2406722345872,
-            "meanLatency": 3.979960925999927,
-            "p50Latency": 3.662625000004482,
-            "p95Latency": 6.593709000000672,
-            "p99Latency": 7.324458999995841
+            "requestsPerSecond": 4671.628325250533,
+            "meanLatency": 3.4165937559999366,
+            "p50Latency": 3.16466699999728,
+            "p95Latency": 4.9429999999993015,
+            "p99Latency": 6.889999999999418
           },
           {
-            "requestsPerSecond": 3751.26369757997,
-            "meanLatency": 4.2518090719999675,
-            "p50Latency": 3.8092499999984284,
-            "p95Latency": 7.940416999997979,
-            "p99Latency": 11.638875000004191
+            "requestsPerSecond": 4021.544750380586,
+            "meanLatency": 3.9747322159999823,
+            "p50Latency": 3.4246249999996508,
+            "p95Latency": 7.179541999998037,
+            "p99Latency": 13.418041999997513
           }
         ]
       }
@@ -251,41 +251,41 @@
     "vinext": {
       "build": {
         "runs": [
-          463.1,
-          468.8,
-          465.2,
-          619.7,
-          541.1,
-          464.9,
-          471
+          390.2,
+          413,
+          396.5,
+          422.5,
+          395.9,
+          408.4,
+          434.1
         ],
-        "mean": 499.1,
-        "median": 468.8,
-        "min": 463.1,
-        "max": 619.7,
-        "stddev": 60
+        "mean": 408.6,
+        "median": 408.4,
+        "min": 390.2,
+        "max": 434.1,
+        "stddev": 15.9
       },
       "artifacts": {
         "client": {
-          "raw": 297448,
-          "gzip": 94273,
+          "raw": 297364,
+          "gzip": 94255,
           "files": 10,
           "fileNames": [
-            "_next/static/9559fc10-7930-4b91-9d7f-5f3dc1b0f9b9/_buildManifest.js",
-            "_next/static/9559fc10-7930-4b91-9d7f-5f3dc1b0f9b9/_ssgManifest.js",
-            "_next/static/chunks/config-matchers-MYSnu83e.js",
-            "_next/static/chunks/error-Drph6Ses.js",
-            "_next/static/chunks/framework-ttvUFOyE.js",
-            "_next/static/chunks/head-BVMNsQxM.js",
-            "_next/static/chunks/hybrid-client-route-owner-C2y5uyHL.js",
-            "_next/static/chunks/index-Bcv99n_T.js",
-            "_next/static/chunks/pages-CkaUEXrc.js",
-            "_next/static/chunks/rolldown-runtime-QTnfLwEv.js"
+            "_next/static/049de82d-20b9-4c3e-b110-022b98847032/_buildManifest.js",
+            "_next/static/049de82d-20b9-4c3e-b110-022b98847032/_ssgManifest.js",
+            "_next/static/chunks/config-matchers-DguvdYcl.js",
+            "_next/static/chunks/error-KihALOCM.js",
+            "_next/static/chunks/framework-CupRooRK.js",
+            "_next/static/chunks/head-B0_ErGLt.js",
+            "_next/static/chunks/hybrid-client-route-owner-BLIYHHXt.js",
+            "_next/static/chunks/index-D2gcPxqK.js",
+            "_next/static/chunks/pages-B7WdZz5e.js",
+            "_next/static/chunks/rolldown-runtime-hePW80VL.js"
           ]
         },
         "server": {
-          "raw": 156101,
-          "gzip": 49631,
+          "raw": 153048,
+          "gzip": 48956,
           "files": 2,
           "fileNames": [
             "_next/static/chunks/hybrid-client-route-owner-CKwPeHTy.js",
@@ -299,121 +299,121 @@
         "hydration": "Count: 0 → Count: 1",
         "requestedJs": {
           "files": 5,
-          "raw": 253203,
-          "gzip": 79704,
+          "raw": 253122,
+          "gzip": 79671,
           "urls": [
             {
-              "url": "/_next/static/chunks/rolldown-runtime-QTnfLwEv.js",
-              "raw": 694,
-              "gzip": 423
+              "url": "/_next/static/chunks/rolldown-runtime-hePW80VL.js",
+              "raw": 716,
+              "gzip": 428
             },
             {
-              "url": "/_next/static/chunks/index-Bcv99n_T.js",
-              "raw": 58899,
-              "gzip": 18396
+              "url": "/_next/static/chunks/index-D2gcPxqK.js",
+              "raw": 58883,
+              "gzip": 18369
             },
             {
-              "url": "/_next/static/chunks/framework-ttvUFOyE.js",
-              "raw": 189729,
-              "gzip": 59006
+              "url": "/_next/static/chunks/framework-CupRooRK.js",
+              "raw": 189655,
+              "gzip": 58999
             },
             {
-              "url": "/_next/static/chunks/pages-CkaUEXrc.js",
+              "url": "/_next/static/chunks/pages-B7WdZz5e.js",
               "raw": 679,
-              "gzip": 377
+              "gzip": 379
             },
             {
-              "url": "/_next/static/chunks/head-BVMNsQxM.js",
-              "raw": 3202,
-              "gzip": 1502
+              "url": "/_next/static/chunks/head-B0_ErGLt.js",
+              "raw": 3189,
+              "gzip": 1496
             }
           ]
         },
         "resourceTiming": {
           "resources": [
             {
-              "name": "http://127.0.0.1:4212/_next/static/chunks/index-Bcv99n_T.js",
-              "transferSize": 59199,
-              "encodedBodySize": 58899,
-              "decodedBodySize": 58899
+              "name": "http://127.0.0.1:4212/_next/static/chunks/index-D2gcPxqK.js",
+              "transferSize": 59183,
+              "encodedBodySize": 58883,
+              "decodedBodySize": 58883
             },
             {
-              "name": "http://127.0.0.1:4212/_next/static/chunks/rolldown-runtime-QTnfLwEv.js",
-              "transferSize": 994,
-              "encodedBodySize": 694,
-              "decodedBodySize": 694
+              "name": "http://127.0.0.1:4212/_next/static/chunks/rolldown-runtime-hePW80VL.js",
+              "transferSize": 1016,
+              "encodedBodySize": 716,
+              "decodedBodySize": 716
             },
             {
-              "name": "http://127.0.0.1:4212/_next/static/chunks/framework-ttvUFOyE.js",
-              "transferSize": 190029,
-              "encodedBodySize": 189729,
-              "decodedBodySize": 189729
+              "name": "http://127.0.0.1:4212/_next/static/chunks/framework-CupRooRK.js",
+              "transferSize": 189955,
+              "encodedBodySize": 189655,
+              "decodedBodySize": 189655
             },
             {
-              "name": "http://127.0.0.1:4212/_next/static/chunks/pages-CkaUEXrc.js",
+              "name": "http://127.0.0.1:4212/_next/static/chunks/pages-B7WdZz5e.js",
               "transferSize": 979,
               "encodedBodySize": 679,
               "decodedBodySize": 679
             },
             {
-              "name": "http://127.0.0.1:4212/_next/static/chunks/head-BVMNsQxM.js",
-              "transferSize": 3502,
-              "encodedBodySize": 3202,
-              "decodedBodySize": 3202
+              "name": "http://127.0.0.1:4212/_next/static/chunks/head-B0_ErGLt.js",
+              "transferSize": 3489,
+              "encodedBodySize": 3189,
+              "decodedBodySize": 3189
             }
           ],
           "navigation": {
-            "transferSize": 1166,
-            "encodedBodySize": 866,
+            "transferSize": 1171,
+            "encodedBodySize": 871,
             "decodedBodySize": 2272
           }
         },
         "html": {
           "raw": 2272,
-          "gzip": 776
+          "gzip": 781
         }
       },
       "requests": {
-        "requestsPerSecond": 2615.7,
-        "meanLatency": 6.1,
-        "p50Latency": 4.2,
-        "p95Latency": 13.8,
-        "p99Latency": 21.3,
+        "requestsPerSecond": 3323.4,
+        "meanLatency": 4.8,
+        "p50Latency": 3.9,
+        "p95Latency": 8.9,
+        "p99Latency": 11.1,
         "rounds": [
           {
-            "requestsPerSecond": 2615.667545704451,
-            "meanLatency": 6.100639895000175,
-            "p50Latency": 4.397125000003143,
-            "p95Latency": 13.838999999999942,
-            "p99Latency": 21.311249999998836
+            "requestsPerSecond": 3323.4318107833064,
+            "meanLatency": 4.8038637209998996,
+            "p50Latency": 3.834792000001471,
+            "p95Latency": 8.858332999996492,
+            "p99Latency": 11.123875000004773
           },
           {
-            "requestsPerSecond": 1997.9131796838421,
-            "meanLatency": 7.999062617999938,
-            "p50Latency": 5.153749999997672,
-            "p95Latency": 20.088207999993756,
-            "p99Latency": 42.520958000000974
+            "requestsPerSecond": 2545.157184097355,
+            "meanLatency": 6.270079611000023,
+            "p50Latency": 4.908207999993465,
+            "p95Latency": 12.992417000001296,
+            "p99Latency": 13.84337499999674
           },
           {
-            "requestsPerSecond": 2450.682814392176,
-            "meanLatency": 6.519683358999944,
-            "p50Latency": 4.229790999997931,
-            "p95Latency": 14.292166999999608,
-            "p99Latency": 55.18433299999742
+            "requestsPerSecond": 2878.471641170766,
+            "meanLatency": 5.550751345999954,
+            "p50Latency": 4.014624999996158,
+            "p95Latency": 11.68829199999891,
+            "p99Latency": 23.866957999998704
           },
           {
-            "requestsPerSecond": 3790.2902020910883,
-            "meanLatency": 4.214763893999894,
-            "p50Latency": 4.015625,
-            "p95Latency": 5.787917000001471,
-            "p99Latency": 7.178915999997116
+            "requestsPerSecond": 4409.552634349382,
+            "meanLatency": 3.613923614000036,
+            "p50Latency": 3.382999999994354,
+            "p95Latency": 5.0292090000002645,
+            "p99Latency": 6.347958000005747
           },
           {
-            "requestsPerSecond": 3282.187282426915,
-            "meanLatency": 4.855168460000059,
-            "p50Latency": 3.863791999996465,
-            "p95Latency": 9.306416999999783,
-            "p99Latency": 10.345208999999159
+            "requestsPerSecond": 3358.8860590274276,
+            "meanLatency": 4.731926054000047,
+            "p50Latency": 3.928708999999799,
+            "p95Latency": 8.461250000000291,
+            "p99Latency": 9.607792000002519
           }
         ]
       }
@@ -421,34 +421,34 @@
     "nextane": {
       "build": {
         "runs": [
-          1183.6,
-          1187.3,
-          1187.8,
-          1481.7,
-          1242.7,
-          1378.3,
-          1142.4
+          1024.9,
+          1039.1,
+          1055,
+          1015.2,
+          1326.1,
+          1115.3,
+          1090.7
         ],
-        "mean": 1257.7,
-        "median": 1187.8,
-        "min": 1142.4,
-        "max": 1481.7,
-        "stddev": 124.9
+        "mean": 1095.2,
+        "median": 1055,
+        "min": 1015.2,
+        "max": 1326.1,
+        "stddev": 107.9
       },
       "artifacts": {
         "client": {
-          "raw": 127843,
-          "gzip": 42024,
+          "raw": 134193,
+          "gzip": 44040,
           "files": 3,
           "fileNames": [
-            "assets/index-DrC6HNjV.js",
-            "assets/pages-B4OAMHLA.js",
-            "assets/runtime-DEv-0lHW.js"
+            "assets/index-fvaIu452.js",
+            "assets/pages-DSyWn2N7.js",
+            "assets/runtime-BJEyWuJw.js"
           ]
         },
         "server": {
-          "raw": 139374,
-          "gzip": 35256,
+          "raw": 139426,
+          "gzip": 35339,
           "files": 3,
           "fileNames": [
             "assets/pages-DaBLCYqt.js",
@@ -463,21 +463,21 @@
         "hydration": "Count: 0 → Count: 1",
         "requestedJs": {
           "files": 3,
-          "raw": 127843,
-          "gzip": 42024,
+          "raw": 134193,
+          "gzip": 44040,
           "urls": [
             {
-              "url": "/assets/index-DrC6HNjV.js",
-              "raw": 11046,
-              "gzip": 4451
+              "url": "/assets/runtime-BJEyWuJw.js",
+              "raw": 122600,
+              "gzip": 39222
             },
             {
-              "url": "/assets/runtime-DEv-0lHW.js",
-              "raw": 116212,
-              "gzip": 37209
+              "url": "/assets/index-fvaIu452.js",
+              "raw": 11008,
+              "gzip": 4454
             },
             {
-              "url": "/assets/pages-B4OAMHLA.js",
+              "url": "/assets/pages-DSyWn2N7.js",
               "raw": 585,
               "gzip": 364
             }
@@ -486,19 +486,19 @@
         "resourceTiming": {
           "resources": [
             {
-              "name": "http://127.0.0.1:4213/assets/index-DrC6HNjV.js",
-              "transferSize": 4759,
-              "encodedBodySize": 4459,
-              "decodedBodySize": 11046
+              "name": "http://127.0.0.1:4213/assets/index-fvaIu452.js",
+              "transferSize": 4754,
+              "encodedBodySize": 4454,
+              "decodedBodySize": 11008
             },
             {
-              "name": "http://127.0.0.1:4213/assets/runtime-DEv-0lHW.js",
-              "transferSize": 37463,
-              "encodedBodySize": 37163,
-              "decodedBodySize": 116212
+              "name": "http://127.0.0.1:4213/assets/runtime-BJEyWuJw.js",
+              "transferSize": 39522,
+              "encodedBodySize": 39222,
+              "decodedBodySize": 122600
             },
             {
-              "name": "http://127.0.0.1:4213/assets/pages-B4OAMHLA.js",
+              "name": "http://127.0.0.1:4213/assets/pages-DSyWn2N7.js",
               "transferSize": 664,
               "encodedBodySize": 364,
               "decodedBodySize": 585
@@ -512,50 +512,50 @@
         },
         "html": {
           "raw": 1815,
-          "gzip": 685
+          "gzip": 684
         }
       },
       "requests": {
-        "requestsPerSecond": 1631.8,
-        "meanLatency": 9.8,
-        "p50Latency": 8,
-        "p95Latency": 21.8,
-        "p99Latency": 42.9,
+        "requestsPerSecond": 1696.2,
+        "meanLatency": 9.4,
+        "p50Latency": 7.7,
+        "p95Latency": 19.8,
+        "p99Latency": 30.8,
         "rounds": [
           {
-            "requestsPerSecond": 1631.805412243593,
-            "meanLatency": 9.775556251000031,
-            "p50Latency": 7.954499999999825,
-            "p95Latency": 21.794833000007202,
-            "p99Latency": 42.917084000000614
+            "requestsPerSecond": 1784.880013672188,
+            "meanLatency": 8.94610398599998,
+            "p50Latency": 7.437750000004598,
+            "p95Latency": 19.788000000000466,
+            "p99Latency": 26.891208000000915
           },
           {
-            "requestsPerSecond": 1580.864477781056,
-            "meanLatency": 10.08576871299991,
-            "p50Latency": 8.12050000000454,
-            "p95Latency": 22.79541700000118,
-            "p99Latency": 33.180208999998285
+            "requestsPerSecond": 1347.222297067912,
+            "meanLatency": 11.837242986999925,
+            "p50Latency": 9.513457999993989,
+            "p95Latency": 27.032458000001498,
+            "p99Latency": 30.845750000000407
           },
           {
-            "requestsPerSecond": 1923.1129814453427,
-            "meanLatency": 8.29024287700007,
-            "p50Latency": 7.110584000001836,
-            "p95Latency": 16.557041000000027,
-            "p99Latency": 18.45220800000243
+            "requestsPerSecond": 1817.1684725311277,
+            "meanLatency": 8.783765076999968,
+            "p50Latency": 7.724167000000307,
+            "p95Latency": 16.597416999997222,
+            "p99Latency": 21.51979200000642
           },
           {
-            "requestsPerSecond": 1727.6950973643739,
-            "meanLatency": 9.231256628999922,
-            "p50Latency": 7.236665999997058,
-            "p95Latency": 17.15758300000016,
-            "p99Latency": 66.31750000000466
+            "requestsPerSecond": 1696.2289922166603,
+            "meanLatency": 9.390646146999956,
+            "p50Latency": 7.673457999997481,
+            "p95Latency": 19.556125000002794,
+            "p99Latency": 35.11358299999847
           },
           {
-            "requestsPerSecond": 1324.8608482090376,
-            "meanLatency": 12.046817569999869,
-            "p50Latency": 8.990165999995952,
-            "p95Latency": 31.992167000003974,
-            "p99Latency": 69.24133299999812
+            "requestsPerSecond": 1693.030919432604,
+            "meanLatency": 9.424216121999962,
+            "p50Latency": 7.234416999999667,
+            "p95Latency": 22.218332999997074,
+            "p99Latency": 41.75537500000064
           }
         ]
       }

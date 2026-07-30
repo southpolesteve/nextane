@@ -3,23 +3,59 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: daily
       time: "10:00"
       timezone: America/Chicago
     open-pull-requests-limit: 5
     groups:
-      npm-development:
-        dependency-type: development
+      all-npm-dependencies:
+        patterns:
+          - "*"
         update-types:
+          - major
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /examples/with-typescript-nextane
+    schedule:
+      interval: daily
+      time: "10:10"
+      timezone: America/Chicago
+    open-pull-requests-limit: 2
+    groups:
+      all-example-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - major
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /benchmarks/pages-compare
+    schedule:
+      interval: daily
+      time: "10:20"
+      timezone: America/Chicago
+    open-pull-requests-limit: 2
+    groups:
+      all-benchmark-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - major
           - minor
           - patch
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: daily
       time: "10:30"
       timezone: America/Chicago
     open-pull-requests-limit: 5
+    groups:
+      all-github-actions:
+        patterns:
+          - "*"

@@ -38,11 +38,11 @@ builds ship:
 
 | Runtime | Client JavaScript (gzip) | Compared with Next.js |
 | --- | ---: | ---: |
-| Next.js 16.2.12 | 109.9 KiB | — |
+| Next.js 16.2.12 | 110.0 KiB | — |
 | Vinext 1.0.0-beta.4 | 77.8 KiB | 29.2% less |
-| Nextane + Octane 0.1.19 | **41.0 KiB** | **62.7% less** |
+| Nextane + Octane 0.1.21 | **43.0 KiB** | **60.9% less** |
 
-Nextane ships 47.3% less client JavaScript than Vinext in this fixture. Its
+Nextane ships 44.7% less client JavaScript than Vinext in this fixture. Its
 production build is slower than Vinext's, and its measured SSR throughput
 trails both Vinext and Next.js. See the
 [full methodology and results](./docs/benchmark.md).
@@ -111,6 +111,9 @@ The full [migration prompt](./MIGRATION_PROMPT.md) covers the framework
 changes, Vite and Workers setup, and verification.
 
 ## Run this repository
+
+Use Node 26.5.1 or newer. This repository pins npm 11.17.0 and tracks current
+major releases rather than maintaining compatibility with older toolchains.
 
 ```sh
 npm install

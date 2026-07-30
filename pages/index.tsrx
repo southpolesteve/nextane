@@ -11,7 +11,7 @@ interface HomeProps {
 export const getStaticProps: GetStaticProps<HomeProps> = async () => ({
   props: {
     generatedAt: new Date().toISOString(),
-    framework: "Octane 0.1.19",
+    framework: "Octane 0.1.21",
   },
 });
 

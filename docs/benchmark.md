@@ -3,9 +3,9 @@
 On July 30, 2026, the local benchmark rendered the same small Pages Router
 page through:
 
-- Next.js 16.2.12 and React 19.2.7;
-- Vinext 1.0.0-beta.4 from npm and React 19.2.7; and
-- the current local Nextane checkout and Octane 0.1.19.
+- Next.js 16.2.12 and React 19.2.8;
+- Vinext 1.0.0-beta.4 from npm and React 19.2.8; and
+- the current local Nextane checkout and Octane 0.1.21.
 
 The page uses `getServerSideProps`, renders a heading, deterministic timestamp,
 hydrated counter, and 20 deterministic rows. The normalized visible content
@@ -16,23 +16,25 @@ matched across all three, and every counter hydrated from `Count: 0` to
 
 | Metric | Next.js | Vinext | Nextane |
 | --- | ---: | ---: | ---: |
-| Production build, median of 7 | 1,120.6 ms | **468.8 ms** | 1,187.8 ms |
-| Cold-page JavaScript, raw | 353.9 KiB | 247.3 KiB | **124.8 KiB** |
-| Cold-page JavaScript, gzip | 109.9 KiB | 77.8 KiB | **41.0 KiB** |
+| Production build, median of 7 | 1,061.1 ms | **408.4 ms** | 1,055.0 ms |
+| Cold-page JavaScript, raw | 353.9 KiB | 247.2 KiB | **131.0 KiB** |
+| Cold-page JavaScript, gzip | 110.0 KiB | 77.8 KiB | **43.0 KiB** |
 | SSR HTML, raw | 2.2 KiB | 2.2 KiB | **1.8 KiB** |
 | SSR HTML, gzip | 0.7 KiB | 0.8 KiB | **0.7 KiB** |
-| Local SSR requests/sec, median | **3,058.4** | 2,615.7 | 1,631.8 |
-| Local SSR p50 | 4.3 ms | **4.2 ms** | 8.0 ms |
+| Local SSR requests/sec, median | **4,021.5** | 3,323.4 | 1,696.2 |
+| Local SSR p50 | **3.4 ms** | 3.9 ms | 7.7 ms |
 
 For this deliberately small hydrated page, Nextane requested:
 
-- **62.7% less gzipped JavaScript than Next.js**; and
-- **47.3% less gzipped JavaScript than Vinext**.
+- **60.9% less gzipped JavaScript than Next.js**; and
+- **44.7% less gzipped JavaScript than Vinext**.
 
-The compatibility and security work since the first measurement added 1.7 KiB
-of requested gzipped client JavaScript, a 4.3% increase. Nextane's median build
-was 6.0% slower than Next.js and 153.4% slower than Vinext. Its sustained local
-SSR throughput was 46.6% below Next.js and 37.6% below Vinext.
+The compatibility, security, and dependency work since the first measurement
+added 3.7 KiB of requested gzipped client JavaScript, a 9.3% increase. The move
+to the latest dependency set, including Octane 0.1.21, accounts for roughly
+2.0 KiB of that increase. Nextane's median build was 0.6% faster than Next.js
+and 158.3% slower than Vinext. Its sustained local SSR throughput was 57.8%
+below Next.js and 49.0% below Vinext.
 
 ## What the numbers mean
 
