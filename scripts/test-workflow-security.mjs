@@ -73,8 +73,9 @@ assert.match(publish, /Downloaded package identity does not match/);
 assert.match(publish, /npm view "nextane@\$VERSION" version/);
 assert.match(
   publish,
-  /npm publish "release\/\$TARBALL" --access public --provenance --ignore-scripts/,
+  /npm publish "\.\/release\/\$TARBALL" --access public --provenance --ignore-scripts/,
 );
+assert.doesNotMatch(publish, /npm publish "release\/\$TARBALL"/);
 
 console.log(
   `Verified least-privilege release boundaries and action pins in ${workflowFiles.length} workflows.`,
