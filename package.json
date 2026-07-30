@@ -92,7 +92,7 @@
     }
   },
   "dependencies": {
-    "@octanejs/vite-plugin": "0.1.19",
+    "@octanejs/vite-plugin": "0.1.21",
     "octane": "0.1.19"
   },
   "devDependencies": {
