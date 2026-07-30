@@ -1,6 +1,6 @@
 {
   "name": "nextane",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Next.js without React. The Pages Router rebuilt on Octane.",
   "type": "module",
   "license": "MIT",

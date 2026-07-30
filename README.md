@@ -13,29 +13,25 @@ The Next.js Pages Router, rebuilt on [Octane](https://octanejs.dev/).
 > Nextane is a fun experiment, not a serious framework. I made it in a couple
 > of hours, entirely by voice-prompting an AI agent from my phone.
 >
-> I think software is becoming ephemeral. The cost of making something like
-> this has basically gone to zero, so you can just make weird software because
-> you feel like it. That is really the point here.
+> The cost of making software like this is approaching zero. You can have an
+> idea, talk to an agent for a few hours, and end up with something real enough
+> to test.
 >
-> If you actually need a Next.js alternative, use
+> If you need a Next.js alternative, use
 > [Vinext](https://vinext.dev/). It passes
 > [more than 97% of the supported Next.js deploy test suite](https://vinext.dev/compatibility),
-> real applications run on it in production, and a lot of serious work has
-> gone into making it reliable. Nextane is for seeing what happens when you
-> point an AI agent at the absolute bleeding edge.
+> runs real applications in production, and is much more mature. Nextane is
+> newer, narrower, and built on alpha software.
 
 [Vinext](https://github.com/cloudflare/vinext) reimplements the Next.js API on
-Vite. Nextane is its spiritual successor in the least responsible sense: it
-asks the unnecessary follow-up question, “What if we did it again, but removed
-React?”
+Vite. It began as a slop fork of Next.js. Nextane is me doing it again, this
+time without React.
 
-Vinext began life as a slop fork of Next.js. Nextane is a slop fork of that
-idea: preserve the productive shape of the Pages Router—filesystem routes,
-familiar data functions, API routes, `Link`, `Head`, and client
-navigation—while replacing React and the Next.js runtime with Octane, Vite,
-and a much smaller runtime.
+Nextane keeps the familiar parts of the Pages Router—filesystem routes, data
+functions, API routes, `Link`, `Head`, and client navigation—but runs them on
+Octane, Vite, and a smaller runtime.
 
-## The interesting result
+## Benchmarks
 
 On the same small hydrated `getServerSideProps` page, the current production
 builds ship:
@@ -46,26 +42,23 @@ builds ship:
 | Vinext 1.0.0-beta.4 | 77.8 KiB | 29.2% less |
 | Nextane + Octane 0.1.19 | **40.8 KiB** | **62.9% less** |
 
-Nextane ships 47.6% less client JavaScript than Vinext in this fixture. That is
-the headline—not that Nextane wins every benchmark. Its current production
-build is slower than Vinext's, and its measured SSR throughput trails both
-comparisons. See the [full methodology and results](./docs/benchmark.md).
+Nextane ships 47.6% less client JavaScript than Vinext in this fixture. Its
+production build is slower than Vinext's, and its measured SSR throughput
+trails both Vinext and Next.js. See the
+[full methodology and results](./docs/benchmark.md).
 
 ## Should I use this?
 
 Probably not.
 
-Use Vinext if you are seriously evaluating a production-ready alternative to
-Next.js. Try Nextane if all of these sound appealing:
+Use Vinext if you need a production-ready alternative to Next.js. Try Nextane
+if:
 
 - you have an existing Pages Router application;
-- you want to see how far Octane can replace React without replacing the API
-  shape of your application;
-- you are comfortable handing the migration to an AI agent and debugging the
-  sharp edges.
+- you want to see how far Octane can replace React while keeping the same APIs;
+- you are comfortable having an AI agent migrate it and debugging what breaks.
 
-Even Octane itself is currently described as alpha software. Nextane is built
-on top of Octane.
+Octane describes itself as alpha software. Nextane is even more experimental.
 
 ## What works
 
@@ -86,21 +79,19 @@ The [live kitchen sink](https://nextane.southpolesteve.workers.dev/) exercises
 static props, server props, dynamic routes, client state, soft navigation, API
 routes, custom errors, and ISR without pulling React into the runtime.
 
-## What does not
+## What doesn't work
 
-- App Router. Octane intentionally does not support React Server Components,
-  so Nextane is unlikely ever to support it.
-- most third-party community React libraries. Octane has its own library
-  bindings, but arbitrary React packages are not drop-in compatible.
+- App Router. Octane does not support React Server Components, so Nextane
+  probably never will.
+- most React ecosystem packages. Octane has its own library bindings, but React
+  packages are not drop-in compatible.
 - class components or React's synthetic event system
 - the complete Next.js configuration and middleware surface
 - every Node-specific request, response, or streaming behavior
-- deployment targets other than Cloudflare Workers today. That is a shortcut
-  in this experiment, not a fundamental Octane limitation: Octane already has
-  Cloudflare and Vercel adapters.
+- deployment targets other than Cloudflare Workers today. This is a shortcut
+  in Nextane, not an Octane limitation.
 
-See the [compatibility ledger](./docs/compatibility.md) for the less funny
-version.
+See the [compatibility ledger](./docs/compatibility.md) for details.
 
 ## Migrate a Pages Router app
 
@@ -114,9 +105,8 @@ every unsupported API or React-only dependency instead of hiding it behind a
 compatibility shim.
 ```
 
-The full [migration prompt](./MIGRATION_PROMPT.md) inventories the application,
-rewrites the framework boundary, configures Vite and Workers, and gives the
-agent a concrete verification checklist.
+The full [migration prompt](./MIGRATION_PROMPT.md) covers the framework
+changes, Vite and Workers setup, and verification.
 
 ## Run this repository
 
@@ -134,9 +124,8 @@ npm run check
 The check runs typechecking, 21 low-level routing/API contract tests, five
 real-browser Pages Router flows, and a production build.
 
-For implementation details, see the
-[architecture](./docs/architecture.md). Nextane is not affiliated with Vercel,
-Next.js, Vinext, Cloudflare, or Octane.
+See [architecture](./docs/architecture.md) for implementation details. Nextane
+is not affiliated with Vercel, Next.js, Vinext, Cloudflare, or Octane.
 
 ## License
 
