@@ -13,6 +13,10 @@ import {
   createNextaneHandler,
   type NextaneEnvironment,
 } from "./src/server/handler";
+import {
+  namespaceIsrCacheRequest,
+  restoreIsrArtifactRequest,
+} from "./src/server/isr-cache";
 
 const manifest = {
   buildId,
@@ -60,7 +64,7 @@ async function loadLocalArtifact(request: Request): Promise<Response> {
 
 export class IsrArtifact extends WorkerEntrypoint<NextaneEnvironment> {
   fetch(request: Request) {
-    return handleIsrArtifact(request);
+    return handleIsrArtifact(restoreIsrArtifactRequest(request, buildId));
   }
 }
 
@@ -69,12 +73,9 @@ export default {
     const handle = createNextaneHandler(manifest, {
       async loadCachedArtifact(artifactRequest) {
         if (import.meta.env.DEV) return loadLocalArtifact(artifactRequest);
-        const url = new URL(artifactRequest.url);
-        return ctx.exports.IsrArtifact.fetch(artifactRequest, {
-          cf: {
-            cacheKey: `${buildId}:${url.pathname}`,
-          },
-        });
+        return ctx.exports.IsrArtifact.fetch(
+          namespaceIsrCacheRequest(artifactRequest, buildId),
+        );
       },
       async revalidatePath(pathname) {
         localArtifactCache.delete(`${buildId}:${pathname}`);
