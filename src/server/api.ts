@@ -292,6 +292,19 @@ class ApiResponse<Data = unknown> implements NextApiResponse<Data> {
   }
 }
 
+function withDefaultApiCachePolicy(response: Response): Response {
+  if (response.status === 101 || response.headers.has("cache-control")) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "private, no-store");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export async function runApiRoute(
   module: Record<string, unknown>,
   request: Request,
@@ -322,9 +335,11 @@ export async function runApiRoute(
       configurable: true,
     });
     const returned = await handler(request);
-    return returned instanceof Response
-      ? returned
-      : new Response(null, { status: 204 });
+    return withDefaultApiCachePolicy(
+      returned instanceof Response
+        ? returned
+        : new Response(null, { status: 204 }),
+    );
   }
 
   const pageRequest = createPageRequest(request);
@@ -358,5 +373,7 @@ export async function runApiRoute(
   };
   const apiResponse = new ApiResponse(options);
   const returned = await handler(apiRequest, apiResponse);
-  return returned instanceof Response ? returned : apiResponse.toResponse();
+  return withDefaultApiCachePolicy(
+    returned instanceof Response ? returned : apiResponse.toResponse(),
+  );
 }

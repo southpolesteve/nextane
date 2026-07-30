@@ -66,22 +66,24 @@ it never deploys or publishes anything.
 
 Against the local Next.js `v16.2.2` baseline:
 
-- **252/252 substantive upstream deploy test cases passed** across server
+- **251/252 substantive upstream deploy test cases passed** across server
   rendering/data, async modules, modern and legacy Link, Head, router rewrites
   and events, `withRouter`, classic and Edge API routes, custom error handling,
-  both trailing-slash configurations, and all 63 prerendering/revalidation
-  deploy cases.
+  both trailing-slash configurations, and prerendering/revalidation. The one
+  expected failure asks Nextane to mint Preview Mode cookies; Nextane fails
+  closed until those cookies can be signed and validated.
 - **6 additional deploy-mode skip sentinels passed but are excluded from the
   substantive denominator**:
   - `404-page-router`: five `should skip for deploy` cases;
   - `api-resolver-query-writeable`: one `should skip next deploy` case.
 - **2 production-only routes-manifest assertions are skipped** in deploy mode.
 
-The full runner therefore has 258 passing test cases, but **258 must not be
-described as substantive compatibility coverage**. The honest smoke result is
-252/252 with six sentinels and two production-only skips reported separately.
-Nextane's own upstream conformance test covers writable API `req.query`
-because that upstream suite skips deploy mode.
+The full runner therefore has 257 passing test cases, one expected failure, and
+two pending tests, but **257 must not be described as substantive compatibility
+coverage**. The honest smoke result is 251/252 with six sentinels, one expected
+Preview Mode failure, and two production-only skips reported separately.
+Nextane's own upstream conformance test covers writable API `req.query` because
+that upstream suite skips deploy mode.
 
 Run the harness unit/conformance tests with:
 

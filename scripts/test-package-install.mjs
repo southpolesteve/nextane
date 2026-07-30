@@ -260,6 +260,29 @@ export default function Post({ slug, generatedAt }) {
   );
 }
 `,
+    "pages/isolation.tsrx": `export async function getServerSideProps({
+  req,
+  res,
+  query,
+}) {
+  const token = String(query.token);
+  await new Promise((resolve) => setTimeout(resolve, Number(query.delay) % 5));
+  res.setHeader("x-request-canary", token);
+  res.setHeader("set-cookie", \`request-canary=\${token}; Path=/; HttpOnly\`);
+  return {
+    props: {
+      token,
+      authorization: req.headers.get("authorization"),
+      cookie: req.cookies.session,
+      requestUrl: req.url,
+    },
+  };
+}
+
+export default function Isolation(props) {
+  return <pre id="request-isolation">{JSON.stringify(props)}</pre>;
+}
+`,
     "pages/api/hello.ts": `import type {
   NextApiRequest,
   NextApiResponse,
@@ -321,6 +344,45 @@ export default function handler(
   const api = await fetch(`${origin}/api/hello?name=package`);
   assert.equal(api.status, 200);
   assert.deepEqual(await api.json(), { hello: "package" });
+  assert.equal(api.headers.get("cache-control"), "private, no-store");
+
+  const isolationTokens = Array.from(
+    { length: 16 },
+    (_, index) => `package-${String(index).padStart(2, "0")}-canary`,
+  );
+  const isolationResponses = await Promise.all(
+    isolationTokens.map((token, index) =>
+      fetch(
+        `${origin}/isolation?token=${encodeURIComponent(token)}&delay=${index}`,
+        {
+          headers: {
+            authorization: `Bearer ${token}`,
+            cookie: `session=${token}`,
+          },
+        },
+      ),
+    ),
+  );
+  const isolationBodies = await Promise.all(
+    isolationResponses.map((response) => response.text()),
+  );
+  for (let index = 0; index < isolationTokens.length; index += 1) {
+    const token = isolationTokens[index];
+    const response = isolationResponses[index];
+    const body = isolationBodies[index];
+    assert.equal(response.status, 200);
+    assert.equal(
+      response.headers.get("cache-control"),
+      "private, no-cache, no-store, max-age=0, must-revalidate",
+    );
+    assert.equal(response.headers.get("x-request-canary"), token);
+    assert.match(response.headers.get("set-cookie") ?? "", new RegExp(token));
+    assert.match(body, new RegExp(token));
+    assert.match(body, new RegExp(`Bearer ${token}`));
+    for (const other of isolationTokens) {
+      if (other !== token) assert.doesNotMatch(body, new RegExp(other));
+    }
+  }
 
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
@@ -381,6 +443,7 @@ export default function handler(
       runtime: {
         home: home.status,
         api: api.status,
+        concurrentRequestIsolation: true,
         installedHydration: true,
         fallbackShell: true,
         sharedIsrArtifact: true,

@@ -958,6 +958,30 @@ function artifactData(artifact: RenderArtifact) {
   };
 }
 
+function defaultArtifactCacheControl(artifact: RenderArtifact): string {
+  if (artifact.gssp) {
+    return "private, no-cache, no-store, max-age=0, must-revalidate";
+  }
+  if (artifact.gsp && artifact.cacheable) {
+    return "public, max-age=0, must-revalidate";
+  }
+  return "private, no-store";
+}
+
+function applyArtifactCachePolicy(
+  headers: Headers,
+  artifact: RenderArtifact,
+): void {
+  if (!headers.has("cache-control")) {
+    headers.set("cache-control", defaultArtifactCacheControl(artifact));
+  }
+  // Request-dependent App/Document data must never be made public, even if
+  // application code tried to set a conflicting header on the response.
+  if (artifact.gsp && !artifact.cacheable) {
+    headers.set("cache-control", "private, no-store");
+  }
+}
+
 async function renderArtifactResponse(
   artifact: RenderArtifact,
   request: Request,
@@ -967,9 +991,7 @@ async function renderArtifactResponse(
 ): Promise<Response> {
   if (artifact.response?.ended) {
     const headers = new Headers(artifact.response.headers);
-    if (artifact.gsp && !artifact.cacheable) {
-      headers.set("cache-control", "private, no-store");
-    }
+    applyArtifactCachePolicy(headers, artifact);
     return new Response(artifact.response.body ?? null, {
       status: artifact.response.status,
       statusText: artifact.response.statusMessage,
@@ -977,12 +999,22 @@ async function renderArtifactResponse(
     });
   }
   if (artifact.redirect) {
-    return Response.redirect(
-      new URL(artifact.redirect.destination, request.url),
-      redirectStatus(artifact.redirect),
+    const headers = new Headers(artifact.response?.headers);
+    headers.set(
+      "location",
+      new URL(artifact.redirect.destination, request.url).toString(),
     );
+    applyArtifactCachePolicy(headers, artifact);
+    return new Response(null, {
+      status: redirectStatus(artifact.redirect),
+      headers,
+    });
   }
-  if (artifact.notFound) return new Response("Not Found", { status: 404 });
+  if (artifact.notFound) {
+    const headers = new Headers(artifact.response?.headers);
+    applyArtifactCachePolicy(headers, artifact);
+    return new Response("Not Found", { status: 404, headers });
+  }
 
   const nextData: NextaneData = {
     props: {
@@ -1029,11 +1061,7 @@ async function renderArtifactResponse(
   const headers = new Headers({
     "content-type": "text/html; charset=utf-8",
     "x-powered-by": "Nextane",
-    "cache-control": artifact.gssp
-      ? "private, no-cache, no-store, max-age=0, must-revalidate"
-      : artifact.gsp && artifact.cacheable
-        ? "public, max-age=0, must-revalidate"
-        : "private, no-store",
+    "cache-control": defaultArtifactCacheControl(artifact),
     "x-nextane-generated-at": String(artifact.generatedAt),
   });
   for (const [name, value] of artifact.response?.headers ?? []) {
@@ -1226,6 +1254,59 @@ function canonicalStaticRequest(
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+async function validatedSharedArtifact(
+  response: Response,
+  manifest: NextaneManifest,
+  route: ServerRouteManifest,
+  params: ParsedUrlQuery,
+  pathname: string,
+): Promise<RenderArtifact> {
+  const value = (await response.json()) as unknown;
+  if (!isRecord(value)) {
+    throw new Error("Shared ISR cache returned an invalid artifact");
+  }
+
+  const artifact = value as unknown as RenderArtifact;
+  const snapshot = artifact.response;
+  const responseIsCanonical =
+    snapshot !== undefined &&
+    snapshot.status === 200 &&
+    snapshot.ended === false &&
+    snapshot.body === undefined &&
+    Array.isArray(snapshot.headers) &&
+    snapshot.headers.length === 0;
+  const queryIsCanonical =
+    isRecord(artifact.query) &&
+    paramsEqual(params, artifact.query as ParsedUrlQuery);
+  const identityMatches =
+    artifact.buildId === (manifest.buildId ?? BUILD_ID) &&
+    artifact.route === route.route &&
+    artifact.resolvedPath === pathname;
+  const safelyShareable =
+    artifact.gsp === true &&
+    artifact.gssp === false &&
+    artifact.cacheable === true &&
+    artifact.isFallback !== true &&
+    artifact.appProps === undefined &&
+    !hasSetCookie(snapshot);
+
+  if (
+    !identityMatches ||
+    !queryIsCanonical ||
+    !responseIsCanonical ||
+    !safelyShareable ||
+    typeof artifact.generatedAt !== "number" ||
+    !Number.isFinite(artifact.generatedAt)
+  ) {
+    throw new Error("Shared ISR cache returned a mismatched artifact");
+  }
+  return artifact;
+}
+
 async function loadArtifact(
   manifest: NextaneManifest,
   route: ServerRouteManifest,
@@ -1266,7 +1347,13 @@ async function loadArtifact(
           );
           if (response.ok) {
             return {
-              artifact: (await response.json()) as RenderArtifact,
+              artifact: await validatedSharedArtifact(
+                response,
+                manifest,
+                route,
+                params,
+                artifactPageUrl.pathname,
+              ),
               cacheStatus:
                 response.headers.get("cf-cache-status") ??
                 response.headers.get("x-cache-status"),
@@ -1305,7 +1392,13 @@ async function loadArtifact(
       throw new Error(`ISR artifact entrypoint failed (${response.status})`);
     }
     return {
-      artifact: (await response.json()) as RenderArtifact,
+      artifact: await validatedSharedArtifact(
+        response,
+        manifest,
+        route,
+        params,
+        artifactPageUrl.pathname,
+      ),
       cacheStatus: response.headers.get("cf-cache-status") ?? response.headers.get("x-cache-status"),
     };
   }
@@ -1506,9 +1599,7 @@ export function createNextaneHandler(
         );
         if (artifact.response?.ended) {
           const responseHeaders = new Headers(artifact.response.headers);
-          if (artifact.gsp && !artifact.cacheable) {
-            responseHeaders.set("cache-control", "private, no-store");
-          }
+          applyArtifactCachePolicy(responseHeaders, artifact);
           const location = responseHeaders.get("location");
           if (
             location &&
@@ -1521,10 +1612,7 @@ export function createNextaneHandler(
                 __N_REDIRECT_STATUS: artifact.response.status,
               },
               {
-                headers:
-                  artifact.gsp && !artifact.cacheable
-                    ? { "cache-control": "private, no-store" }
-                    : undefined,
+                headers: responseHeaders,
               },
             );
           }
@@ -1537,14 +1625,7 @@ export function createNextaneHandler(
         const headers = new Headers({
           ...(cacheStatus ? { "x-nextane-cache-status": cacheStatus } : {}),
           "x-nextane-generated-at": String(artifact.generatedAt),
-          ...(artifact.gssp
-            ? {
-                "cache-control":
-                  "private, no-cache, no-store, max-age=0, must-revalidate",
-              }
-            : artifact.gsp && artifact.cacheable
-              ? { "cache-control": "public, max-age=0, must-revalidate" }
-              : { "cache-control": "private, no-store" }),
+          "cache-control": defaultArtifactCacheControl(artifact),
         });
         for (const [name, value] of artifact.response?.headers ?? []) {
           if (name.toLowerCase() === "set-cookie") headers.append(name, value);

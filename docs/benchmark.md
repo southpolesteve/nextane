@@ -5,7 +5,7 @@ page through:
 
 - Next.js 16.2.12 and React 19.2.7;
 - Vinext 1.0.0-beta.4 from npm and React 19.2.7; and
-- Nextane 0.1.0 and Octane 0.1.19.
+- the current local Nextane checkout and Octane 0.1.19.
 
 The page uses `getServerSideProps`, renders a heading, deterministic timestamp,
 hydrated counter, and 20 deterministic rows. The normalized visible content
@@ -16,23 +16,23 @@ matched across all three, and every counter hydrated from `Count: 0` to
 
 | Metric | Next.js | Vinext | Nextane |
 | --- | ---: | ---: | ---: |
-| Production build, median of 7 | 1,111.5 ms | **507.5 ms** | 1,220.1 ms |
-| Cold-page JavaScript, raw | 353.9 KiB | 247.3 KiB | **124.4 KiB** |
-| Cold-page JavaScript, gzip | 109.9 KiB | 77.8 KiB | **40.8 KiB** |
+| Production build, median of 7 | 1,120.6 ms | **468.8 ms** | 1,187.8 ms |
+| Cold-page JavaScript, raw | 353.9 KiB | 247.3 KiB | **124.8 KiB** |
+| Cold-page JavaScript, gzip | 109.9 KiB | 77.8 KiB | **41.0 KiB** |
 | SSR HTML, raw | 2.2 KiB | 2.2 KiB | **1.8 KiB** |
 | SSR HTML, gzip | 0.7 KiB | 0.8 KiB | **0.7 KiB** |
-| Local SSR requests/sec, median | **4,163.5** | 3,186.9 | 1,744.6 |
-| Local SSR p50 | **3.5 ms** | 4.1 ms | 7.0 ms |
+| Local SSR requests/sec, median | **3,058.4** | 2,615.7 | 1,631.8 |
+| Local SSR p50 | 4.3 ms | **4.2 ms** | 8.0 ms |
 
 For this deliberately small hydrated page, Nextane requested:
 
-- **62.9% less gzipped JavaScript than Next.js**; and
-- **47.6% less gzipped JavaScript than Vinext**.
+- **62.7% less gzipped JavaScript than Next.js**; and
+- **47.3% less gzipped JavaScript than Vinext**.
 
-The compatibility work since the first measurement added 1.5 KiB of requested
-gzipped client JavaScript, a 3.7% increase. Nextane's median build was 9.8%
-slower than Next.js and 140.4% slower than Vinext. Its sustained local SSR
-throughput was 58.1% below Next.js and 45.3% below Vinext.
+The compatibility and security work since the first measurement added 1.7 KiB
+of requested gzipped client JavaScript, a 4.3% increase. Nextane's median build
+was 6.0% slower than Next.js and 153.4% slower than Vinext. Its sustained local
+SSR throughput was 46.6% below Next.js and 37.6% below Vinext.
 
 ## What the numbers mean
 

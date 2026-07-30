@@ -1,5 +1,5 @@
-import { createElement } from "octane";
-import { describe, expect, it } from "vitest";
+import { createElement, use } from "octane";
+import { describe, expect, it, vi } from "vitest";
 import App from "../fixtures/upstream-app.tsrx";
 import Document from "../fixtures/upstream-document.tsrx";
 import Page from "../fixtures/upstream-page.tsrx";
@@ -127,6 +127,189 @@ describe("Pages Router server compatibility", () => {
     expect(response.headers.get("x-from-gssp")).toBe("yes");
   });
 
+  it("isolates request, response, cookie, header, and body data across overlapping GSSP HTML and data requests", async () => {
+    const requestCount = 24;
+    let entered = 0;
+    let releaseAll!: () => void;
+    const allEntered = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const IsolationPage = (props: Record<string, unknown>) =>
+      createElement("pre", { id: "request-isolation" }, JSON.stringify(props));
+    const isolationRoute = {
+      ...route,
+      route: "/request-isolation",
+      regexSource: "^/request-isolation/?$",
+      params: [],
+      async load() {
+        return {
+          default: IsolationPage,
+          async getServerSideProps({
+            req,
+            res,
+            query,
+          }: {
+            req: {
+              url: string;
+              cookies: Record<string, string>;
+              headers: { get(name: string): string | null };
+            };
+            res: { setHeader(name: string, value: string): void };
+            query: Record<string, unknown>;
+          }) {
+            const token = String(query.token);
+            entered += 1;
+            if (entered === requestCount) releaseAll();
+            await allEntered;
+            res.setHeader("x-request-canary", token);
+            res.setHeader(
+              "set-cookie",
+              `request-canary=${token}; Path=/; HttpOnly`,
+            );
+            return {
+              props: {
+                token,
+                authorization: req.headers.get("authorization"),
+                cookie: req.cookies.session,
+                requestUrl: req.url,
+              },
+            };
+          },
+        };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        buildId: "request-isolation-build",
+        routes: [isolationRoute],
+        loadApp: null,
+        loadDocument: null,
+      }),
+    );
+    const tokens = Array.from(
+      { length: requestCount },
+      (_, index) => `request-${String(index).padStart(2, "0")}-canary`,
+    );
+    const responses = await Promise.all(
+      tokens.map((token, index) =>
+        handler(
+          new Request(
+            index % 2 === 0
+              ? `https://nextane.test/request-isolation?token=${token}`
+              : `https://nextane.test/_next/data/request-isolation-build/request-isolation.json?token=${token}`,
+            {
+              headers: {
+                authorization: `Bearer ${token}`,
+                cookie: `session=${token}`,
+              },
+            },
+          ),
+          { ASSETS: assets },
+        ),
+      ),
+    );
+    const bodies = await Promise.all(responses.map((response) => response.text()));
+
+    for (let index = 0; index < requestCount; index += 1) {
+      const response = responses[index];
+      const body = bodies[index];
+      const token = tokens[index];
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe(
+        "private, no-cache, no-store, max-age=0, must-revalidate",
+      );
+      expect(response.headers.get("x-request-canary")).toBe(token);
+      expect(response.headers.get("set-cookie")).toContain(token);
+      expect(body).toContain(token);
+      expect(body).toContain(`Bearer ${token}`);
+      for (const other of tokens) {
+        if (other !== token) expect(body).not.toContain(other);
+      }
+    }
+  });
+
+  it("isolates Octane suspense state and Router state across concurrent SSR passes", async () => {
+    const requestCount = 16;
+    let entered = 0;
+    let releaseAll!: () => void;
+    const allEntered = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const SuspendedPage = ({
+      delayedIdentity,
+    }: {
+      delayedIdentity: Promise<string>;
+    }) =>
+      createElement(
+        "main",
+        {},
+        createElement("p", { id: "resolved-identity" }, use(delayedIdentity)),
+        createElement("p", { id: "router-identity" }, Router.asPath),
+      );
+    const suspenseRoute = {
+      ...route,
+      route: "/suspense-isolation",
+      regexSource: "^/suspense-isolation/?$",
+      params: [],
+      async load() {
+        return {
+          default: SuspendedPage,
+          async getServerSideProps({
+            query,
+          }: {
+            query: Record<string, unknown>;
+          }) {
+            const token = String(query.token);
+            entered += 1;
+            if (entered === requestCount) releaseAll();
+            await allEntered;
+            return {
+              props: {
+                delayedIdentity: new Promise<string>((resolve) => {
+                  setTimeout(
+                    () => resolve(`resolved:${token}`),
+                    (requestCount - entered) % 4,
+                  );
+                }),
+              },
+            };
+          },
+        };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [suspenseRoute],
+        loadApp: null,
+        loadDocument: null,
+      }),
+    );
+    const tokens = Array.from(
+      { length: requestCount },
+      (_, index) => `render-${String(index).padStart(2, "0")}-canary`,
+    );
+    const bodies = await Promise.all(
+      tokens.map((token) =>
+        handler(
+          new Request(
+            `https://nextane.test/suspense-isolation?token=${token}`,
+          ),
+          { ASSETS: assets },
+        ).then((response) => response.text()),
+      ),
+    );
+
+    for (let index = 0; index < requestCount; index += 1) {
+      expect(bodies[index]).toContain(`resolved:${tokens[index]}`);
+      expect(bodies[index]).toContain(
+        `/suspense-isolation?token=${tokens[index]}`,
+      );
+      for (const other of tokens) {
+        if (other !== tokens[index]) expect(bodies[index]).not.toContain(other);
+      }
+    }
+  });
+
   it("supports Document.getInitialProps renderPage component enhancers", async () => {
     const handler = createNextaneHandler(manifest());
     const response = await handler(
@@ -206,7 +389,67 @@ describe("Pages Router server compatibility", () => {
 
     expect(response.status).toBe(202);
     expect(response.headers.get("x-early")).toBe("yes");
+    expect(response.headers.get("cache-control")).toBe(
+      "private, no-cache, no-store, max-age=0, must-revalidate",
+    );
     expect(await response.text()).toBe("hello from gssp");
+  });
+
+  it("keeps request-dependent GSSP redirects private by default", async () => {
+    const redirectRoute = {
+      ...route,
+      route: "/private-redirect",
+      regexSource: "^/private-redirect/?$",
+      params: [],
+      async load() {
+        return {
+          default: Page,
+          getServerSideProps({
+            query,
+          }: {
+            query: Record<string, unknown>;
+          }) {
+            return {
+              redirect: {
+                destination: `/account/${String(query.user)}`,
+                permanent: true,
+              },
+            };
+          },
+        };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [redirectRoute],
+        loadApp: null,
+        loadDocument: null,
+      }),
+    );
+    const [first, second] = await Promise.all([
+      handler(
+        new Request("https://nextane.test/private-redirect?user=first"),
+        { ASSETS: assets },
+      ),
+      handler(
+        new Request("https://nextane.test/private-redirect?user=second"),
+        { ASSETS: assets },
+      ),
+    ]);
+
+    expect(first.status).toBe(308);
+    expect(second.status).toBe(308);
+    expect(first.headers.get("location")).toBe(
+      "https://nextane.test/account/first",
+    );
+    expect(second.headers.get("location")).toBe(
+      "https://nextane.test/account/second",
+    );
+    for (const response of [first, second]) {
+      expect(response.headers.get("cache-control")).toBe(
+        "private, no-cache, no-store, max-age=0, must-revalidate",
+      );
+    }
   });
 
   it("renders POST requests without forwarding the method to the HTML asset lookup", async () => {
@@ -778,46 +1021,48 @@ describe("Pages Router server compatibility", () => {
       url: string;
       headers: Array<[string, string]>;
     }> = [];
-    let cachedArtifact: Response | undefined;
+    let cachedArtifact: Promise<Response> | undefined;
     const handler = createNextaneHandler(staticManifest, {
       async loadCachedArtifact(request) {
         artifactRequests.push({
           url: request.url,
           headers: [...request.headers],
         });
-        cachedArtifact ??= await artifactHandler(request);
-        return cachedArtifact.clone();
+        cachedArtifact ??= artifactHandler(request);
+        return (await cachedArtifact).clone();
       },
     });
-    const attacker = await handler(
-      new Request(
-        "https://attacker.test/static/value?secret=QUERY_SECRET",
-        {
-          headers: {
-            authorization: "Bearer HEADER_SECRET",
-            cookie: "session=COOKIE_SECRET",
-            "accept-language": "LANGUAGE_SECRET",
-            "user-agent": "AGENT_SECRET",
-            "x-nextane-only-cached": "1",
+    const [attacker, victim] = await Promise.all([
+      handler(
+        new Request(
+          "https://attacker.test/static/value?secret=QUERY_SECRET",
+          {
+            headers: {
+              authorization: "Bearer HEADER_SECRET",
+              cookie: "session=COOKIE_SECRET",
+              "accept-language": "LANGUAGE_SECRET",
+              "user-agent": "AGENT_SECRET",
+              "x-nextane-only-cached": "1",
+            },
           },
-        },
+        ),
+        { ASSETS: assets },
       ),
-      { ASSETS: assets },
-    );
-    const victim = await handler(
-      new Request(
-        "https://victim.test/static/value?secret=VICTIM_QUERY",
-        {
-          headers: {
-            authorization: "Bearer VICTIM_HEADER",
-            cookie: "session=VICTIM_COOKIE",
-            "accept-language": "VICTIM_LANGUAGE",
-            "user-agent": "VICTIM_AGENT",
+      handler(
+        new Request(
+          "https://victim.test/static/value?secret=VICTIM_QUERY",
+          {
+            headers: {
+              authorization: "Bearer VICTIM_HEADER",
+              cookie: "session=VICTIM_COOKIE",
+              "accept-language": "VICTIM_LANGUAGE",
+              "user-agent": "VICTIM_AGENT",
+            },
           },
-        },
+        ),
+        { ASSETS: assets },
       ),
-      { ASSETS: assets },
-    );
+    ]);
     const attackerHtml = await attacker.text();
     const victimHtml = await victim.text();
 
@@ -860,6 +1105,168 @@ describe("Pages Router server compatibility", () => {
     expect(victimHtml).toBe(attackerHtml);
     expect(attackerHtml).toContain('"resolvedPath":"/static/value"');
     expect(attackerHtml).toContain('"buildId":"canonical-build"');
+  });
+
+  it("fails closed if a shared cache returns an artifact for another path", async () => {
+    const StaticTenantPage = ({ tenant }: { tenant: string }) =>
+      createElement("p", { id: "tenant" }, tenant);
+    const tenantRoute = {
+      ...route,
+      route: "/tenant/[tenant]",
+      regexSource: "^/tenant/([^/]+)/?$",
+      params: [{ name: "tenant", kind: "single" as const }],
+      async load() {
+        return {
+          default: StaticTenantPage,
+          getStaticProps({
+            params,
+          }: {
+            params: Record<string, string>;
+          }) {
+            return {
+              props: { tenant: `${params.tenant}-private-artifact` },
+              revalidate: 60,
+            };
+          },
+        };
+      },
+    };
+    const tenantManifest = manifest({
+      buildId: "tenant-build",
+      routes: [tenantRoute],
+      loadApp: null,
+      loadDocument: null,
+    });
+    const artifactHandler = createIsrArtifactHandler(tenantManifest);
+    const attackerArtifact = await artifactHandler(
+      new Request("https://nextane.internal/tenant/attacker"),
+    );
+    const attackerBody = await attackerArtifact.text();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const handler = createNextaneHandler(tenantManifest, {
+        async loadCachedArtifact() {
+          return new Response(attackerBody, {
+            status: attackerArtifact.status,
+            headers: attackerArtifact.headers,
+          });
+        },
+      });
+      const victim = await handler(
+        new Request("https://nextane.test/tenant/victim"),
+        { ASSETS: assets },
+      );
+      const victimHtml = await victim.text();
+
+      expect(victim.status).toBe(500);
+      expect(victim.headers.get("cache-control")).toBe("private, no-store");
+      expect(victimHtml).not.toContain("attacker-private-artifact");
+      expect(error).toHaveBeenCalledWith(
+        "[nextane] request failed",
+        expect.objectContaining({
+          message: "Shared ISR cache returned a mismatched artifact",
+        }),
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("rejects tampered shared artifacts instead of serving potentially cross-user data", async () => {
+    const StaticTenantPage = ({ tenant }: { tenant: string }) =>
+      createElement("p", { id: "tenant" }, tenant);
+    const tenantRoute = {
+      ...route,
+      route: "/validated/[tenant]",
+      regexSource: "^/validated/([^/]+)/?$",
+      params: [{ name: "tenant", kind: "single" as const }],
+      async load() {
+        return {
+          default: StaticTenantPage,
+          getStaticProps({
+            params,
+          }: {
+            params: Record<string, string>;
+          }) {
+            return {
+              props: { tenant: params.tenant },
+              revalidate: 60,
+            };
+          },
+        };
+      },
+    };
+    const tenantManifest = manifest({
+      buildId: "validated-build",
+      routes: [tenantRoute],
+      loadApp: null,
+      loadDocument: null,
+    });
+    const canonicalResponse = await createIsrArtifactHandler(tenantManifest)(
+      new Request("https://nextane.internal/validated/victim"),
+    );
+    const canonicalArtifact = (await canonicalResponse.json()) as Record<
+      string,
+      any
+    >;
+    const mutations: Array<
+      [string, (artifact: Record<string, any>) => void]
+    > = [
+      ["build ID", (artifact) => { artifact.buildId = "attacker-build"; }],
+      ["route", (artifact) => { artifact.route = "/validated/[other]"; }],
+      [
+        "resolved path",
+        (artifact) => { artifact.resolvedPath = "/validated/attacker"; },
+      ],
+      [
+        "query variance",
+        (artifact) => { artifact.query = { tenant: "victim", user: "attacker" }; },
+      ],
+      ["GSP marker", (artifact) => { artifact.gsp = false; }],
+      ["GSSP marker", (artifact) => { artifact.gssp = true; }],
+      ["cacheable marker", (artifact) => { artifact.cacheable = false; }],
+      ["fallback marker", (artifact) => { artifact.isFallback = true; }],
+      [
+        "App props",
+        (artifact) => { artifact.appProps = { user: "attacker" }; },
+      ],
+      [
+        "response cookie",
+        (artifact) => {
+          artifact.response.headers = [
+            ["set-cookie", "session=attacker; Path=/; HttpOnly"],
+          ];
+        },
+      ],
+      ["response status", (artifact) => { artifact.response.status = 201; }],
+      ["generation timestamp", (artifact) => { artifact.generatedAt = null; }],
+    ];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const [name, mutate] of mutations) {
+        const tampered = structuredClone(canonicalArtifact);
+        mutate(tampered);
+        const handler = createNextaneHandler(tenantManifest, {
+          async loadCachedArtifact() {
+            return Response.json(tampered);
+          },
+        });
+        const response = await handler(
+          new Request("https://nextane.test/validated/victim"),
+          { ASSETS: assets },
+        );
+        const html = await response.text();
+
+        expect(response.status, name).toBe(500);
+        expect(response.headers.get("cache-control"), name).toBe(
+          "private, no-store",
+        );
+        expect(html, name).not.toContain("attacker");
+      }
+      expect(error).toHaveBeenCalledTimes(mutations.length);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it("rejects ambiguous rewrite patterns before processing attacker paths", () => {
