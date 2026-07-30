@@ -31,10 +31,25 @@ export function NextScript(props: ElementProps) {
   return createElement("nextane-script", props);
 }
 
+const INLINE_JSON_ESCAPE: Record<string, string> = {
+  "&": "\\u0026",
+  "<": "\\u003c",
+  ">": "\\u003e",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+export function serializeInlineNextData(value: unknown): string {
+  return (JSON.stringify(value) ?? "null").replace(
+    /[&<>\u2028\u2029]/g,
+    (character) => INLINE_JSON_ESCAPE[character],
+  );
+}
+
 NextScript.getInlineScriptSource = (props: {
   __NEXT_DATA__?: unknown;
   nextData?: unknown;
-}) => JSON.stringify(props.__NEXT_DATA__ ?? props.nextData ?? {});
+}) => serializeInlineNextData(props.__NEXT_DATA__ ?? props.nextData ?? {});
 
 export default function Document() {
   return (

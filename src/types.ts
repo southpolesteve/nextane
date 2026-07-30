@@ -1,4 +1,19 @@
 export type ParsedUrlQuery = Record<string, string | string[] | undefined>;
+export type SizeLimit =
+  | number
+  | `${number}`
+  | `${number}${"b" | "B" | "kb" | "KB" | "mb" | "MB" | "gb" | "GB"}`;
+
+export interface PageConfig {
+  api?: {
+    bodyParser?:
+      | {
+          sizeLimit?: SizeLimit;
+        }
+      | false;
+  };
+  runtime?: "nodejs" | "edge" | "experimental-edge";
+}
 
 export interface NextaneRequest {
   readonly method?: string;

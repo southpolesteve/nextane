@@ -88,6 +88,8 @@ routes, custom errors, and ISR without pulling React into the runtime.
 - class components or React's synthetic event system
 - the complete Next.js configuration and middleware surface
 - every Node-specific request, response, or streaming behavior
+- Preview and Draft Mode. `setPreviewData()` fails closed until preview cookies
+  can be signed and validated
 - deployment targets other than Cloudflare Workers today. This is a shortcut
   in Nextane, not an Octane limitation.
 

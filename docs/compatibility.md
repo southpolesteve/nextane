@@ -13,7 +13,7 @@ larger Next.js Pages Router compatibility claim.
 | Special pages | Working slice | `_app` and `_app.getInitialProps`, `_document` and `renderPage` enhancement, `_error`, `404`, and `500` |
 | Client runtime | Working slice | modern and legacy `Link`, URL objects, singleton router, `useRouter`, `withRouter`, push/replace/back, route events |
 | Head | Working slice | title/head output across SSR and soft navigation |
-| API routes | Working slice | classic callbacks plus Edge/Web `Request`/`Response`; method, URL, headers, query, cookies, parsed body, status, JSON, send, redirect |
+| API routes | Working slice | classic callbacks plus Edge/Web `Request`/`Response`; method, URL, headers, query, cookies, parsed body, a 1 MiB default body limit with `config.api.bodyParser` controls, status, JSON, send, redirect |
 | Page data | Working slice | `/_next/data/:buildId/*.json` for static and server props |
 | ISR | Working slice | shared render artifact, numeric revalidation, Workers Cache SWR |
 | URL policy | Working slice | `trailingSlash` redirects, SSR links, client navigation, dotted paths, and query strings |
@@ -25,14 +25,15 @@ larger Next.js Pages Router compatibility claim.
   fallback routes are generated through the shared runtime artifact cache
 - broader Node `IncomingMessage`/`ServerResponse` compatibility beyond the
   exercised Pages data and API surfaces
-- full preview/draft mode parity beyond preview cookies and the exercised
-  on-demand revalidation surface
+- Preview and Draft Mode. `setPreviewData()` fails closed because Nextane does
+  not yet have the signing and validation needed to issue secure preview
+  cookies
 - the broader redirects/rewrites matrix, middleware, headers config, locales,
   and `basePath`
 - `next/image`, `next/script`, `next/font`, and other framework components
 - exact shallow-routing semantics and scroll restoration
-- advanced API behavior such as body limits, response-size warnings, streaming,
-  and external resolvers
+- advanced API behavior such as response-size warnings, streaming, and external
+  resolvers
 - third-party React component libraries
 - React Server Components and the App Router, intentionally out of scope
 
@@ -59,10 +60,10 @@ class components or Worker filesystem assumptions require migration, builds
 with Vite, and runs the result locally in Wrangler. The original upstream test
 cases are not rewritten.
 
-Against the local Next.js `v16.2.2` baseline, the current 19-file set
+Against the local Next.js `v16.2.2` baseline, the current 19-file run
 produced:
 
-- **252/252 substantive upstream deploy test cases passed**:
+- **251/252 substantive upstream deploy test cases passed**:
   - original rendering/data baseline: 69/69;
   - async modules: 7/7;
   - Edge Pages support: 8/8;
@@ -76,17 +77,20 @@ produced:
   - custom error `req.url`: 1/1;
   - trailing-slash behavior, enabled and disabled: 68/68;
   - prerendering, `getStaticPaths` fallback modes, page-data caching, ISR,
-    preview cookies, and on-demand revalidation: 63/63.
+    and on-demand revalidation: 62/63. The one failure expects Next.js Preview
+    Mode cookies, which Nextane now refuses to issue without secure signing and
+    validation.
 - **6 deploy-mode skip sentinels passed and are reported separately**:
   five from `404-page-router` and one from
   `api-resolver-query-writeable`.
 - **2 production-only routes-manifest assertions were skipped** because this
   harness runs the upstream suites in deploy mode.
 
-The upstream runner therefore has 258 passing cases in total, but the six
+The upstream runner therefore has 257 passing cases in total, but the six
 sentinels do not exercise their suites' behavior. The compatibility result is
-**252/252 substantive test cases, plus six deploy-mode sentinels and two
-production-only skips**—not 258 substantive test cases.
+**251/252 substantive test cases, plus six deploy-mode sentinels, one expected
+Preview Mode failure, and two production-only skips**—not 257 substantive test
+cases.
 
 The selected files are:
 

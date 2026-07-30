@@ -15,6 +15,7 @@ import {
 } from "./src/server/handler";
 
 const manifest = {
+  buildId,
   routes,
   loadApp,
   loadDocument,

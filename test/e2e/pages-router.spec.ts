@@ -2,6 +2,15 @@ import { expect, test } from "@playwright/test";
 
 const waitsForDevelopmentTransforms = !process.env.NEXTANE_BASE_URL;
 
+function buildIdFromHtml(html: string): string {
+  const source =
+    /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/.exec(
+      html,
+    )?.[1];
+  expect(source).toBeTruthy();
+  return (JSON.parse(source!) as { buildId: string }).buildId;
+}
+
 test("static props render, Octane hydrates, and Head owns the title", async ({ page }) => {
   const response = await page.goto("/");
 
@@ -13,6 +22,7 @@ test("static props render, Octane hydrates, and Head owns the title", async ({ p
     await expect(page.locator("html")).toHaveAttribute("data-nextane-hydrated", "true");
   }
   await expect(page.getByRole("button", { name: "Octane state: 0" })).toBeVisible();
+  expect(await page.locator("main.page").count()).toBe(1);
   await page.getByRole("button", { name: "Octane state: 0" }).click();
   await expect(page.getByRole("button", { name: "Octane state: 1" })).toBeVisible();
 
@@ -85,7 +95,10 @@ test("ISR HTML and page-data requests share one rendered artifact", async ({ req
   // Retrying proves both public shapes converge on the newly cached artifact.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const html = await request.get("/isr");
-    const data = await request.get("/_next/data/development/isr.json");
+    const htmlSource = await html.text();
+    const data = await request.get(
+      `/_next/data/${encodeURIComponent(buildIdFromHtml(htmlSource))}/isr.json`,
+    );
 
     expect(html.status()).toBe(200);
     expect(data.status()).toBe(200);

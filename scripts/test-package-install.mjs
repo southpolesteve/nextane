@@ -7,11 +7,13 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const suppliedTarball = process.argv[2] ? path.resolve(process.argv[2]) : null;
 
 function run(command, args, cwd, options = {}) {
   return new Promise((resolve, reject) => {
@@ -97,15 +99,25 @@ const temporaryRoot = await fs.mkdtemp(
 );
 const applicationRoot = path.join(temporaryRoot, "app");
 let server;
+let browser;
 
 try {
-  const packed = await run(
-    "npm",
-    ["pack", "--json", "--pack-destination", temporaryRoot],
-    repositoryRoot,
-    { capture: true },
-  );
-  const [{ filename }] = JSON.parse(packed.stdout);
+  let filename;
+  if (suppliedTarball) {
+    const tarball = await fs.stat(suppliedTarball);
+    assert(tarball.isFile(), "supplied package tarball must be a file");
+    assert.match(suppliedTarball, /\.tgz$/);
+    filename = path.basename(suppliedTarball);
+    await fs.copyFile(suppliedTarball, path.join(temporaryRoot, filename));
+  } else {
+    const packed = await run(
+      "npm",
+      ["pack", "--json", "--pack-destination", temporaryRoot],
+      repositoryRoot,
+      { capture: true },
+    );
+    [{ filename }] = JSON.parse(packed.stdout);
+  }
   const relativeTarball = `../${filename}`;
 
   await writeFiles(applicationRoot, {
@@ -297,10 +309,42 @@ export default function handler(
   assert.equal(home.status, 200);
   assert.match(homeHtml, /Installed from an npm tarball/);
   assert.equal(home.headers.get("x-powered-by"), "Nextane");
+  const nextDataSource =
+    /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/.exec(
+      homeHtml,
+    )?.[1];
+  assert.ok(nextDataSource, "home response should include __NEXT_DATA__");
+  const { buildId } = JSON.parse(nextDataSource);
+  assert.equal(typeof buildId, "string");
+  assert.ok(buildId.length > 0);
 
   const api = await fetch(`${origin}/api/hello?name=package`);
   assert.equal(api.status, 200);
   assert.deepEqual(await api.json(), { hello: "package" });
+
+  browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  const browserErrors = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  await page.goto(origin);
+  await page.locator("html[data-nextane-hydrated='true']").waitFor();
+  assert.equal(
+    await page.locator("#headline").count(),
+    1,
+    "installed package hydration must not duplicate the server tree",
+  );
+  await page.evaluate(() => {
+    window.__nextanePackageSentinel = "survived";
+  });
+  await page.locator("#post-link").click();
+  await page.waitForURL("**/posts/hello");
+  await page.locator("#post").waitFor();
+  assert.equal(
+    await page.evaluate(() => window.__nextanePackageSentinel),
+    "survived",
+    "installed package navigation must remain client-side",
+  );
+  assert.deepEqual(browserErrors, []);
 
   const initialLazy = await fetch(`${origin}/posts/lazy`);
   const initialLazyHtml = await initialLazy.text();
@@ -309,7 +353,7 @@ export default function handler(
   assert.match(initialLazyHtml, /"isFallback":true/);
 
   const lazyData = await fetch(
-    `${origin}/_next/data/development/posts/lazy.json`,
+    `${origin}/_next/data/${encodeURIComponent(buildId)}/posts/lazy.json`,
   );
   const lazyGeneratedAt = lazyData.headers.get("x-nextane-generated-at");
   assert.equal(lazyData.status, 200);
@@ -337,12 +381,14 @@ export default function handler(
       runtime: {
         home: home.status,
         api: api.status,
+        installedHydration: true,
         fallbackShell: true,
         sharedIsrArtifact: true,
       },
     }),
   );
 } finally {
+  if (browser) await browser.close();
   if (server) await stop(server);
   if (process.env.NEXTANE_KEEP_PACKAGE_FIXTURE === "1") {
     console.error(`Kept package fixture at ${temporaryRoot}`);

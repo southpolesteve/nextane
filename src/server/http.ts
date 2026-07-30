@@ -5,12 +5,18 @@ import type {
 
 export function parseCookies(header: string | null): Record<string, string> {
   if (!header) return {};
-  return Object.fromEntries(
-    header.split(";").map((part) => {
-      const [name, ...value] = part.trim().split("=");
-      return [name, decodeURIComponent(value.join("="))];
-    }),
-  );
+  const cookies: Record<string, string> = {};
+  for (const part of header.split(";")) {
+    const [name, ...valueParts] = part.trim().split("=");
+    if (!name) continue;
+    const value = valueParts.join("=");
+    try {
+      cookies[name] = decodeURIComponent(value);
+    } catch {
+      cookies[name] = value;
+    }
+  }
+  return cookies;
 }
 
 function requestHeaders(headers: Headers) {

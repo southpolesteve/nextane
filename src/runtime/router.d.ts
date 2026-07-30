@@ -25,6 +25,10 @@ export declare const events: {
 };
 export declare function formatRouterHref(value: UrlObject | string): string;
 export declare function setRouterState(nextState: RouterState): void;
+/** @internal */
+export declare function configureServerRouterStateProvider(
+  provider: () => RouterState | undefined,
+): void;
 export declare function configureClientRouter(options: {
   navigate(
     url: string,

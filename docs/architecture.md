@@ -48,7 +48,13 @@ Octane root. `Link` and the singleton router expose familiar Pages Router
 shapes and route events.
 
 API routes adapt the Fetch `Request` to a deliberately small
-`NextApiRequest`/`NextApiResponse` callback surface.
+`NextApiRequest`/`NextApiResponse` callback surface. Classic API bodies are
+counted while streaming and limited to 1 MiB by default. Pages can change the
+limit with `config.api.bodyParser.sizeLimit` or disable automatic parsing with
+`config.api.bodyParser: false`.
+
+Preview Mode is not implemented. `setPreviewData()` throws instead of issuing
+unsigned cookies that would look valid without providing authentication.
 
 ## ISR and Workers Cache
 

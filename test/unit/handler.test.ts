@@ -1,8 +1,13 @@
+import { createElement } from "octane";
 import { describe, expect, it } from "vitest";
 import App from "../fixtures/upstream-app.tsrx";
 import Document from "../fixtures/upstream-document.tsrx";
 import Page from "../fixtures/upstream-page.tsrx";
+import ReplacementDocument from "../fixtures/replacement-document.tsrx";
+import ReplacementPage from "../fixtures/replacement-page.tsrx";
+import Router from "../../src/runtime/router";
 import {
+  createIsrArtifactHandler,
   createNextaneHandler,
   type NextaneManifest,
 } from "../../src/server/handler";
@@ -366,5 +371,682 @@ describe("Pages Router server compatibility", () => {
     expect(removed.headers.get("location")).toBe(
       "https://nextane.test/items/octane?hello=world",
     );
+  });
+
+  it("inserts attacker-controlled replacement tokens literally without duplicating the document", async () => {
+    const replacement = "$&|$`|$'";
+    const pathToken = `PATH:${replacement}`;
+    const queryToken = `QUERY:${replacement}`;
+    const dataToken = `DATA:${replacement}`;
+    const documentToken = `DOCUMENT:${replacement}`;
+    const replacementRoute = {
+      ...route,
+      route: "/replacement/[slug]",
+      regexSource: "^/replacement/([^/]+)/?$",
+      async load() {
+        return {
+          default: ReplacementPage,
+          getServerSideProps({
+            params,
+            query,
+          }: {
+            params: Record<string, unknown>;
+            query: Record<string, unknown>;
+          }) {
+            return {
+              props: {
+                pathToken: String(params.slug),
+                queryToken: String(query.queryToken),
+                dataToken,
+              },
+            };
+          },
+        };
+      },
+    };
+    const replacementManifest = manifest({
+      routes: [replacementRoute],
+      loadApp: null,
+      loadDocument: async () => ({ default: ReplacementDocument }),
+    });
+    const handler = createNextaneHandler(replacementManifest);
+    const url = new URL(
+      `/replacement/${encodeURIComponent(pathToken)}`,
+      "https://nextane.test",
+    );
+    url.searchParams.set("queryToken", queryToken);
+    url.searchParams.set("documentToken", documentToken);
+
+    const response = await handler(new Request(url), { ASSETS: assets });
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html.length).toBeLessThan(12_000);
+    expect(html.match(/<html\b/g)).toHaveLength(1);
+    expect(html.match(/id="__next"/g)).toHaveLength(1);
+    expect(html.match(/id="__NEXT_DATA__"/g)).toHaveLength(1);
+    expect(html.match(/src="\/client\.js"/g)).toHaveLength(1);
+    expect(html).toContain(pathToken);
+    expect(html).toContain(queryToken);
+    expect(html).toContain(dataToken);
+    expect(html).toContain(documentToken);
+    expect(html).toContain(`content: "${replacement}"`);
+
+    const dataUrl = new URL(
+      `/_next/data/development/replacement/${encodeURIComponent(pathToken)}.json`,
+      "https://nextane.test",
+    );
+    dataUrl.searchParams.set("queryToken", queryToken);
+    dataUrl.searchParams.set("documentToken", documentToken);
+    const dataResponse = await handler(new Request(dataUrl), {
+      ASSETS: assets,
+    });
+    const dataText = await dataResponse.text();
+    expect(dataResponse.status).toBe(200);
+    expect(dataText.length).toBeLessThan(4_000);
+    expect(dataText).toContain(pathToken);
+    expect(dataText).toContain(queryToken);
+    expect(dataText).toContain(dataToken);
+  });
+
+  it.each(["html-first", "data-first"] as const)(
+    "keeps request-dependent GSP artifacts private across %s cross-user requests",
+    async (order) => {
+      type AppContext = {
+        req: {
+          cookies: Record<string, string>;
+          headers: { get(name: string): string | null };
+          raw: Request;
+        };
+        res: { setHeader(name: string, value: string): void };
+      };
+      const PersonalizedPage = () => createElement("p", {}, "static page");
+      const PersonalizedApp = ((props: Record<string, unknown>) =>
+        createElement(
+          "main",
+          { id: "personalized-app" },
+          JSON.stringify({
+            cookie: props.cookie,
+            authorization: props.authorization,
+            host: props.host,
+            language: props.language,
+            userAgent: props.userAgent,
+          }),
+        )) as ((props: Record<string, unknown>) => unknown) & {
+        getInitialProps?: (input: { ctx: AppContext }) => unknown;
+      };
+      PersonalizedApp.getInitialProps = ({ ctx }) => {
+        const host = new URL(ctx.req.raw.url).host;
+        ctx.res.setHeader("set-cookie", `visitor=${host}; Path=/; HttpOnly`);
+        return {
+          cookie: ctx.req.cookies.session,
+          authorization: ctx.req.headers.get("authorization"),
+          host,
+          language: ctx.req.headers.get("accept-language"),
+          userAgent: ctx.req.headers.get("user-agent"),
+          pageProps: {},
+        };
+      };
+      const personalizedRoute = {
+        ...route,
+        route: "/personalized",
+        regexSource: "^/personalized/?$",
+        params: [],
+        async load() {
+          return {
+            default: PersonalizedPage,
+            getStaticProps() {
+              return { props: { static: true }, revalidate: 60 };
+            },
+          };
+        },
+      };
+      const personalizedManifest = manifest({
+        buildId: "matrix-build",
+        routes: [personalizedRoute],
+        loadApp: async () => ({ default: PersonalizedApp }),
+        loadDocument: null,
+      });
+      let sharedCacheCalls = 0;
+      const handler = createNextaneHandler(personalizedManifest, {
+        async loadCachedArtifact() {
+          sharedCacheCalls += 1;
+          return new Response("shared cache must be bypassed", { status: 500 });
+        },
+      });
+      const requestFor = (
+        identity: "attacker" | "victim",
+        kind: "html" | "data",
+      ) =>
+        new Request(
+          kind === "html"
+            ? `https://${identity}.test/personalized?seed=${identity}`
+            : `https://${identity}.test/_next/data/matrix-build/personalized.json?seed=${identity}`,
+          {
+            headers: {
+              cookie: `session=${identity}`,
+              authorization: `Bearer ${identity}`,
+              "accept-language": `${identity}-language`,
+              "user-agent": `${identity}-agent`,
+            },
+          },
+        );
+      const firstKind = order === "html-first" ? "html" : "data";
+      const secondKind = firstKind === "html" ? "data" : "html";
+      const first = await handler(requestFor("attacker", firstKind), {
+        ASSETS: assets,
+      });
+      const second = await handler(requestFor("victim", secondKind), {
+        ASSETS: assets,
+      });
+      const firstText = await first.text();
+      const secondText = await second.text();
+
+      expect(sharedCacheCalls).toBe(0);
+      expect(first.headers.get("cache-control")).toBe("private, no-store");
+      expect(second.headers.get("cache-control")).toBe("private, no-store");
+      expect(first.headers.get("set-cookie")).toContain("visitor=attacker.test");
+      expect(second.headers.get("set-cookie")).toContain("visitor=victim.test");
+      for (const value of [
+        "attacker",
+        "Bearer attacker",
+        "attacker.test",
+        "attacker-language",
+        "attacker-agent",
+      ]) {
+        expect(firstText).toContain(value);
+        expect(secondText).not.toContain(value);
+      }
+      for (const value of [
+        "victim",
+        "Bearer victim",
+        "victim.test",
+        "victim-language",
+        "victim-agent",
+      ]) {
+        expect(secondText).toContain(value);
+      }
+    },
+  );
+
+  it("keeps request-dependent custom Document artifacts private and out of shared ISR", async () => {
+    type DocumentContext = {
+      req: {
+        headers: { get(name: string): string | null };
+      };
+      res: { setHeader(name: string, value: string): void };
+      renderPage(): Promise<Record<string, unknown>>;
+    };
+    const StaticPage = () => createElement("p", {}, "static document page");
+    const PersonalizedDocument = ((props: Record<string, unknown>) =>
+      createElement(
+        "html",
+        {},
+        createElement(
+          "head",
+          {},
+          createElement("nextane-head", {}),
+        ),
+        createElement(
+          "body",
+          {},
+          createElement("p", { id: "document-identity" }, props.identity),
+          createElement("nextane-main", {}),
+          createElement("nextane-script", {}),
+        ),
+      )) as ((props: Record<string, unknown>) => unknown) & {
+        getInitialProps?: (context: DocumentContext) => unknown;
+      };
+    PersonalizedDocument.getInitialProps = async ({
+      req,
+      res,
+      renderPage,
+    }) => {
+      const identity = req.headers.get("authorization") ?? "anonymous";
+      res.setHeader("set-cookie", `document-user=${identity}; Path=/; HttpOnly`);
+      return { ...(await renderPage()), identity };
+    };
+    const staticRoute = {
+      ...route,
+      route: "/document-private",
+      regexSource: "^/document-private/?$",
+      params: [],
+      async load() {
+        return {
+          default: StaticPage,
+          getStaticProps() {
+            return { props: {}, revalidate: 60 };
+          },
+        };
+      },
+    };
+    const documentManifest = manifest({
+      buildId: "document-build",
+      routes: [staticRoute],
+      loadApp: null,
+      loadDocument: async () => ({ default: PersonalizedDocument }),
+    });
+    let sharedCacheCalls = 0;
+    const handler = createNextaneHandler(documentManifest, {
+      async loadCachedArtifact() {
+        sharedCacheCalls += 1;
+        return new Response("shared cache must be bypassed", { status: 500 });
+      },
+    });
+    const attacker = await handler(
+      new Request("https://nextane.test/document-private?user=attacker", {
+        headers: { authorization: "Bearer attacker" },
+      }),
+      { ASSETS: assets },
+    );
+    const victim = await handler(
+      new Request("https://nextane.test/document-private?user=victim", {
+        headers: { authorization: "Bearer victim" },
+      }),
+      { ASSETS: assets },
+    );
+    const attackerHtml = await attacker.text();
+    const victimHtml = await victim.text();
+
+    expect(sharedCacheCalls).toBe(0);
+    expect(attacker.headers.get("cache-control")).toBe("private, no-store");
+    expect(victim.headers.get("cache-control")).toBe("private, no-store");
+    expect(attacker.headers.get("set-cookie")).toContain(
+      "document-user=Bearer attacker",
+    );
+    expect(victim.headers.get("set-cookie")).toContain(
+      "document-user=Bearer victim",
+    );
+    expect(attackerHtml).toContain("Bearer attacker");
+    expect(victimHtml).toContain("Bearer victim");
+    expect(victimHtml).not.toContain("Bearer attacker");
+
+    const isrResponse = await createIsrArtifactHandler(documentManifest)(
+      new Request("https://nextane.internal/document-private"),
+    );
+    expect(isrResponse.status).toBe(409);
+    expect(isrResponse.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("isolates router state across overlapping page and Document renders", async () => {
+    let markFirstEntered!: () => void;
+    let releaseFirst!: () => void;
+    const firstEntered = new Promise<void>((resolve) => {
+      markFirstEntered = resolve;
+    });
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const RouterPage = () => createElement("p", {}, Router.asPath);
+    type RouterDocumentContext = {
+      asPath: string;
+      renderPage(): Promise<Record<string, unknown>>;
+    };
+    const RouterDocument = ((props: Record<string, unknown>) =>
+      createElement(
+        "html",
+        {},
+        createElement("head", {}, createElement("nextane-head", {})),
+        createElement(
+          "body",
+          {},
+          createElement("p", { id: "document-router" }, props.observedAsPath),
+          createElement("nextane-main", {}),
+          createElement("nextane-script", {}),
+        ),
+      )) as ((props: Record<string, unknown>) => unknown) & {
+        getInitialProps?: (context: RouterDocumentContext) => unknown;
+      };
+    RouterDocument.getInitialProps = async ({ asPath, renderPage }) => {
+      const rendered = await renderPage();
+      if (asPath.startsWith("/overlap/first")) {
+        markFirstEntered();
+        await firstGate;
+      } else {
+        releaseFirst();
+        await Promise.resolve();
+      }
+      return { ...rendered, observedAsPath: Router.asPath };
+    };
+    const overlapRoute = {
+      ...route,
+      route: "/overlap/[slug]",
+      regexSource: "^/overlap/([^/]+)/?$",
+      async load() {
+        return { default: RouterPage };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [overlapRoute],
+        loadApp: null,
+        loadDocument: async () => ({ default: RouterDocument }),
+      }),
+    );
+    const firstResponse = handler(
+      new Request("https://nextane.test/overlap/first?request=first"),
+      { ASSETS: assets },
+    );
+    await firstEntered;
+    const secondResponse = handler(
+      new Request("https://nextane.test/overlap/second?request=second"),
+      { ASSETS: assets },
+    );
+    const [firstHtml, secondHtml] = await Promise.all([
+      firstResponse.then((response) => response.text()),
+      secondResponse.then((response) => response.text()),
+    ]);
+
+    expect(firstHtml).toContain("/overlap/first?request=first");
+    expect(firstHtml).not.toContain("/overlap/second?request=second");
+    expect(secondHtml).toContain("/overlap/second?request=second");
+    expect(secondHtml).not.toContain("/overlap/first?request=first");
+  });
+
+  it("canonicalizes shared GSP artifact generation and strips request variance", async () => {
+    let staticRenderCalls = 0;
+    const StaticPage = ({ slug }: { slug: string }) =>
+      createElement("p", { id: "static-slug" }, slug);
+    const staticRoute = {
+      ...route,
+      route: "/static/[slug]",
+      regexSource: "^/static/([^/]+)/?$",
+      async load() {
+        return {
+          default: StaticPage,
+          getStaticProps({
+            params,
+          }: {
+            params: Record<string, string>;
+          }) {
+            staticRenderCalls += 1;
+            return { props: { slug: params.slug }, revalidate: 60 };
+          },
+        };
+      },
+    };
+    const staticManifest = manifest({
+      buildId: "canonical-build",
+      routes: [staticRoute],
+      loadApp: null,
+      loadDocument: null,
+    });
+    const artifactHandler = createIsrArtifactHandler(staticManifest);
+    const artifactRequests: Array<{
+      url: string;
+      headers: Array<[string, string]>;
+    }> = [];
+    let cachedArtifact: Response | undefined;
+    const handler = createNextaneHandler(staticManifest, {
+      async loadCachedArtifact(request) {
+        artifactRequests.push({
+          url: request.url,
+          headers: [...request.headers],
+        });
+        cachedArtifact ??= await artifactHandler(request);
+        return cachedArtifact.clone();
+      },
+    });
+    const attacker = await handler(
+      new Request(
+        "https://attacker.test/static/value?secret=QUERY_SECRET",
+        {
+          headers: {
+            authorization: "Bearer HEADER_SECRET",
+            cookie: "session=COOKIE_SECRET",
+            "accept-language": "LANGUAGE_SECRET",
+            "user-agent": "AGENT_SECRET",
+            "x-nextane-only-cached": "1",
+          },
+        },
+      ),
+      { ASSETS: assets },
+    );
+    const victim = await handler(
+      new Request(
+        "https://victim.test/static/value?secret=VICTIM_QUERY",
+        {
+          headers: {
+            authorization: "Bearer VICTIM_HEADER",
+            cookie: "session=VICTIM_COOKIE",
+            "accept-language": "VICTIM_LANGUAGE",
+            "user-agent": "VICTIM_AGENT",
+          },
+        },
+      ),
+      { ASSETS: assets },
+    );
+    const attackerHtml = await attacker.text();
+    const victimHtml = await victim.text();
+
+    expect(attacker.status).toBe(200);
+    expect(victim.status).toBe(200);
+    expect(attacker.headers.get("cache-control")).toBe(
+      "public, max-age=0, must-revalidate",
+    );
+    expect(victim.headers.get("cache-control")).toBe(
+      "public, max-age=0, must-revalidate",
+    );
+    expect(artifactRequests).toEqual([
+      {
+        url: "https://nextane.internal/static/value",
+        headers: [],
+      },
+      {
+        url: "https://nextane.internal/static/value",
+        headers: [],
+      },
+    ]);
+    expect(staticRenderCalls).toBe(1);
+    for (const secret of [
+      "attacker.test",
+      "QUERY_SECRET",
+      "HEADER_SECRET",
+      "COOKIE_SECRET",
+      "LANGUAGE_SECRET",
+      "AGENT_SECRET",
+      "victim.test",
+      "VICTIM_QUERY",
+      "VICTIM_HEADER",
+      "VICTIM_COOKIE",
+      "VICTIM_LANGUAGE",
+      "VICTIM_AGENT",
+    ]) {
+      expect(attackerHtml).not.toContain(secret);
+      expect(victimHtml).not.toContain(secret);
+    }
+    expect(victimHtml).toBe(attackerHtml);
+    expect(attackerHtml).toContain('"resolvedPath":"/static/value"');
+    expect(attackerHtml).toContain('"buildId":"canonical-build"');
+  });
+
+  it("rejects ambiguous rewrite patterns before processing attacker paths", () => {
+    const started = performance.now();
+    expect(() =>
+      createNextaneHandler(
+        manifest({
+          config: {
+            rewrites: [
+              {
+                source: "/:a*/:b*/:c*/:d*/fixed",
+                destination: "/items/rewritten",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toThrow(/Unsupported ambiguous rewrite source/);
+    expect(() =>
+      createNextaneHandler(
+        manifest({
+          config: {
+            rewrites: [
+              {
+                source: "/:a?:b?:c?:d?/fixed",
+                destination: "/items/rewritten",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toThrow(/parameters must be separated by literal text/);
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  it("matches a supported rewrite in bounded time on a long hostile path", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        config: {
+          rewrites: [
+            {
+              source: "/safe/:path*/fixed",
+              destination: "/items/rewritten",
+            },
+          ],
+        },
+      }),
+    );
+    const started = performance.now();
+    const response = await handler(
+      new Request(
+        `https://nextane.test/safe/${"segment/".repeat(1_000)}missing`,
+      ),
+      { ASSETS: assets },
+    );
+
+    expect(response.status).toBe(404);
+    expect(performance.now() - started).toBeLessThan(750);
+  });
+
+  it("requires the exact data build ID and GET or HEAD", async () => {
+    const handler = createNextaneHandler(manifest({ buildId: "secure-build" }));
+    const valid = await handler(
+      new Request(
+        "https://nextane.test/_next/data/secure-build/items/octane.json",
+      ),
+      { ASSETS: assets },
+    );
+    const head = await handler(
+      new Request(
+        "https://nextane.test/_next/data/secure-build/items/octane.json",
+        { method: "HEAD" },
+      ),
+      { ASSETS: assets },
+    );
+    const wrongBuild = await handler(
+      new Request(
+        "https://nextane.test/_next/data/other-build/items/octane.json",
+      ),
+      { ASSETS: assets },
+    );
+
+    expect(valid.status).toBe(200);
+    expect(head.status).toBe(200);
+    expect(wrongBuild.status).toBe(404);
+    expect(await wrongBuild.json()).toEqual({ notFound: true });
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      const response = await handler(
+        new Request(
+          "https://nextane.test/_next/data/secure-build/items/octane.json",
+          { method },
+        ),
+        { ASSETS: assets },
+      );
+      expect(response.status, method).toBe(405);
+      expect(response.headers.get("allow"), method).toBe("GET, HEAD");
+    }
+  });
+
+  it("tolerates malformed cookies, strips reserved ingress headers, and adds safe defaults", async () => {
+    const headerRoute = {
+      ...route,
+      route: "/headers",
+      regexSource: "^/headers/?$",
+      params: [],
+      async load() {
+        return {
+          default: Page,
+          getServerSideProps({
+            req,
+          }: {
+            req: {
+              cookies: Record<string, string>;
+              headers: { get(name: string): string | null };
+            };
+          }) {
+            return {
+              props: {
+                query: {
+                  malformedCookie: req.cookies.bad,
+                  reservedHeader: req.headers.get("x-nextane-only-cached"),
+                },
+              },
+            };
+          },
+        };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [headerRoute],
+        loadApp: null,
+        loadDocument: null,
+      }),
+    );
+    const response = await handler(
+      new Request("https://nextane.test/headers", {
+        headers: {
+          cookie: "bad=%; good=octane%20powered",
+          "x-nextane-only-cached": "1",
+        },
+      }),
+      { ASSETS: assets },
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('"malformedCookie":"%"');
+    expect(html).toContain('"reservedHeader":null');
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("referrer-policy")).toBe(
+      "strict-origin-when-cross-origin",
+    );
+  });
+
+  it("HTML-escapes the development fallback error body", async () => {
+    const malicious = "</pre><script>globalThis.pwned=true</script>";
+    const failingRoute = {
+      ...route,
+      route: "/failure",
+      regexSource: "^/failure/?$",
+      params: [],
+      async load() {
+        throw new Error(malicious);
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [failingRoute],
+        loadApp: null,
+        loadDocument: null,
+        loadError: null,
+      }),
+    );
+    const response = await handler(
+      new Request("https://nextane.test/failure"),
+      {
+        ASSETS: {
+          async fetch() {
+            throw new Error("error template unavailable");
+          },
+        },
+      },
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(500);
+    expect(html).not.toContain(malicious);
+    expect(html).not.toContain("<script>globalThis.pwned");
+    expect(html).toContain("&lt;/pre&gt;&lt;script&gt;");
   });
 });

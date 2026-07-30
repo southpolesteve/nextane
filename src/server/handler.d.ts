@@ -7,6 +7,7 @@ export interface NextaneEnvironment {
 }
 
 export interface NextaneManifest {
+  buildId?: string;
   routes: Array<{
     route: string;
     regexSource: string;
@@ -26,6 +27,7 @@ export interface NextaneManifest {
 }
 
 export interface RenderArtifact {
+  buildId?: string;
   route: string;
   pageProps: Record<string, unknown>;
   appProps?: Record<string, unknown>;
@@ -37,6 +39,7 @@ export interface RenderArtifact {
   revalidate?: number | boolean;
   notFound?: boolean;
   redirect?: Redirect;
+  cacheable?: boolean;
   generatedAt: number;
   [key: string]: unknown;
 }

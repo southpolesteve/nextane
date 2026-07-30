@@ -1,10 +1,14 @@
-import { createElement, useSyncExternalStore } from "octane";
+import {
+  createElement,
+  useSyncExternalStore,
+} from "octane";
 import type {
   NextaneRouter,
   ParsedUrlQuery,
   TransitionOptions,
   UrlObject,
 } from "../types";
+import { isSafeClientNavigationTarget } from "./navigation";
 
 type RouterEvent =
   | "routeChangeStart"
@@ -59,6 +63,7 @@ interface RouterRuntimeStore {
   navigate: Navigate | null;
   prefetchRoute: ((url: string) => Promise<void>) | null;
   legacyRouteChangeComplete: RouterEventHandler | null;
+  serverStateProvider?: () => RouterState | undefined;
   state: RouterState;
 }
 
@@ -88,6 +93,10 @@ const runtime =
 const events = runtime.events;
 const listeners = runtime.listeners;
 
+function currentState(): RouterState {
+  return runtime.serverStateProvider?.() ?? runtime.state;
+}
+
 function notify() {
   for (const listener of listeners) listener();
 }
@@ -108,15 +117,16 @@ function routeMatchesVisiblePath(route: string, pathname: string): boolean {
 }
 
 function formatUrlObject(value: UrlObject): string {
-  const current = new URL(runtime.state.asPath, "https://nextane.local");
+  const state = currentState();
+  const current = new URL(state.asPath, "https://nextane.local");
   const query = { ...(value.query ?? {}) };
   let pathname = value.pathname ?? current.pathname;
 
   if (
     !value.pathname &&
-    routeMatchesVisiblePath(runtime.state.route, current.pathname)
+    routeMatchesVisiblePath(state.route, current.pathname)
   ) {
-    pathname = runtime.state.route.replace(
+    pathname = state.route.replace(
       /\[([^\]]+)\]/g,
       (segment, name: string) => {
         const replacement = query[name];
@@ -163,7 +173,7 @@ function normalizeTrailingSlash(value: string): string {
   if (pathname === "/") return value;
   const fileLike = /\/[^/]+\.[^/]+\/?$/.test(pathname);
   const normalized =
-    runtime.state.trailingSlash && !fileLike
+    currentState().trailingSlash && !fileLike
       ? pathname.endsWith("/")
         ? pathname
         : `${pathname}/`
@@ -176,8 +186,8 @@ export function formatRouterHref(value: UrlObject | string): string {
   if (
     value.startsWith("?") &&
     routeMatchesVisiblePath(
-      runtime.state.route,
-      new URL(runtime.state.asPath, "https://nextane.local").pathname,
+      currentState().route,
+      new URL(currentState().asPath, "https://nextane.local").pathname,
     )
   ) {
     return formatUrlObject({
@@ -215,6 +225,13 @@ export function setRouterState(nextState: RouterState) {
   notify();
 }
 
+/** @internal Installed only by the server runtime to provide request-local state. */
+export function configureServerRouterStateProvider(
+  provider: () => RouterState | undefined,
+) {
+  runtime.serverStateProvider = provider;
+}
+
 export function configureClientRouter(options: {
   navigate: Navigate;
   prefetch: (url: string) => Promise<void>;
@@ -228,28 +245,28 @@ const Router: NextaneRouter & {
   onRouteChangeComplete: RouterEventHandler | null;
 } = {
   get route() {
-    return runtime.state.route;
+    return currentState().route;
   },
   get pathname() {
-    return runtime.state.pathname;
+    return currentState().pathname;
   },
   get query() {
-    return runtime.state.query;
+    return currentState().query;
   },
   get asPath() {
-    return runtime.state.asPath;
+    return currentState().asPath;
   },
   get basePath() {
-    return runtime.state.basePath;
+    return currentState().basePath;
   },
   get isReady() {
-    return runtime.state.isReady;
+    return currentState().isReady;
   },
   get isPreview() {
-    return runtime.state.isPreview;
+    return currentState().isPreview;
   },
   get isFallback() {
-    return runtime.state.isFallback;
+    return currentState().isFallback;
   },
   get onRouteChangeComplete() {
     return runtime.legacyRouteChangeComplete;
@@ -265,6 +282,12 @@ const Router: NextaneRouter & {
   async push(url, as, options) {
     const href = formatRouterHref(url);
     const destination = as ? formatRouterHref(as) : href;
+    if (
+      !isSafeClientNavigationTarget(href) ||
+      !isSafeClientNavigationTarget(destination)
+    ) {
+      return false;
+    }
     if (!runtime.navigate) {
       if (typeof window !== "undefined") window.location.assign(destination);
       return false;
@@ -274,6 +297,12 @@ const Router: NextaneRouter & {
   async replace(url, as, options) {
     const href = formatRouterHref(url);
     const destination = as ? formatRouterHref(as) : href;
+    if (
+      !isSafeClientNavigationTarget(href) ||
+      !isSafeClientNavigationTarget(destination)
+    ) {
+      return false;
+    }
     if (!runtime.navigate) {
       if (typeof window !== "undefined") window.location.replace(destination);
       return false;
@@ -281,7 +310,9 @@ const Router: NextaneRouter & {
     return runtime.navigate(destination, "replace", options, href);
   },
   async prefetch(url) {
-    await runtime.prefetchRoute?.(formatRouterHref(url));
+    const href = formatRouterHref(url);
+    if (!isSafeClientNavigationTarget(href)) return;
+    await runtime.prefetchRoute?.(href);
   },
   back() {
     if (typeof window !== "undefined") window.history.back();
@@ -292,14 +323,11 @@ const Router: NextaneRouter & {
 };
 
 export function useRouter(): NextaneRouter {
-  // SSR reads the request-scoped state already installed by the page render.
-  // Calling Octane's client hook from an uncompiled helper module has no active
-  // hook frame on the server; the subscription is only needed after hydration.
   if (typeof window !== "undefined") {
     useSyncExternalStore(
       subscribe,
-      () => runtime.state,
-      () => runtime.state,
+      currentState,
+      currentState,
     );
   }
   return Router;

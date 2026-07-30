@@ -5,78 +5,183 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
   test:
-    name: Test
+    name: Test and package
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      should-publish: ${{ steps.release.outputs.should-publish }}
+      version: ${{ steps.release.outputs.version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Audit all build and runtime dependencies
+        run: npm audit --audit-level=high
+      - name: Install Chromium
+        run: npx --no-install playwright install --with-deps chromium
       - run: npm run check
       - run: npm run test:package
       - run: npm run test:example
+      - run: npm run test:package:security
+      - name: Choose the next patch version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: release
+        run: |
+          existing="$(git tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          if [ -n "$existing" ]; then
+            version="${existing#v}"
+            if npm view "nextane@$version" version --json >/dev/null 2>&1; then
+              echo "should-publish=false" >> "$GITHUB_OUTPUT"
+              echo "Commit is already published and tagged as $existing"
+              exit 0
+            fi
+            echo "should-publish=true" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "Resuming the reserved but unpublished release $existing"
+            exit 0
+          fi
+          current="$(node -p "require('./package.json').version")"
+          published="$(npm view nextane version)"
+          version="$(node scripts/next-release-version.mjs "$current" "$published")"
+          echo "should-publish=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build the exact release tarball
+        if: steps.release.outputs.should-publish == 'true'
+        id: pack
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          npm run build:package
+          npm pack \
+            --ignore-scripts \
+            --json \
+            --pack-destination "$RUNNER_TEMP" \
+            > "$RUNNER_TEMP/npm-pack.json"
+          node scripts/verify-package-files.mjs "$RUNNER_TEMP/npm-pack.json"
+          tarball="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'))[0].filename" "$RUNNER_TEMP/npm-pack.json")"
+          node scripts/test-package-install.mjs "$RUNNER_TEMP/$tarball"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "path=$RUNNER_TEMP/$tarball" >> "$GITHUB_OUTPUT"
+      - name: Store the exact release tarball
+        if: steps.release.outputs.should-publish == 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: npm-package-${{ github.sha }}
+          path: ${{ steps.pack.outputs.path }}
+          if-no-files-found: error
+          retention-days: 1
 
-  publish:
-    name: Publish
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  reserve:
+    name: Reserve release tag
+    if: needs.test.outputs.should-publish == 'true'
     needs: test
     runs-on: ubuntu-latest
-    concurrency:
-      group: npm-publish
-      cancel-in-progress: false
+    timeout-minutes: 5
     permissions:
       contents: write
-      id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - name: Reserve the release version
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            test "$(git rev-parse "$tag^{commit}")" = "$RELEASE_SHA"
+            echo "$tag already reserves $RELEASE_SHA"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" "$RELEASE_SHA" -m "$tag"
+          git push origin "refs/tags/$tag"
+
+  publish:
+    name: Publish exact tarball
+    if: needs.test.outputs.should-publish == 'true'
+    needs:
+      - test
+      - reserve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Install current npm
-        run: npm install --global npm@11.18.0
-      - run: npm ci
-      - name: Check for an existing release
-        id: existing
+      - name: Verify trusted-publishing support
         run: |
-          tag="$(git tag --points-at HEAD --list 'v*' | head -n 1)"
-          if [ -n "$tag" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Commit is already released as $tag"
-          fi
-      - name: Choose patch version
-        if: steps.existing.outputs.skip != 'true'
-        id: version
-        run: |
-          current="$(node -p "require('./package.json').version")"
-          published="$(npm view nextane version)"
-          version="$(node scripts/next-release-version.mjs "$current" "$published")"
-          npm version "$version" --no-git-tag-version --allow-same-version
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Publish to npm
-        if: steps.existing.outputs.skip != 'true'
-        run: npm publish
-      - name: Commit version and tag release
-        if: steps.existing.outputs.skip != 'true'
+          npm_version="$(npm --version)"
+          node -e '
+            const [major, minor] = process.argv[1].split(".").map(Number)
+            if (major < 11 || (major === 11 && minor < 5)) {
+              throw new Error(`npm ${process.argv[1]} does not support trusted publishing`)
+            }
+          ' "$npm_version"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: npm-package-${{ github.sha }}
+          path: release
+      - name: Validate the downloaded artifact
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          TARBALL: ${{ needs.test.outputs.tarball }}
+          VERSION: ${{ needs.test.outputs.version }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Release v${VERSION} [skip ci]"
+          test "$TARBALL" = "nextane-$VERSION.tgz"
+          test -f "release/$TARBALL"
+          test "$(find release -type f | wc -l | tr -d ' ')" = "1"
+          tar -xOf "release/$TARBALL" package/package.json |
+            node -e '
+              let source = ""
+              process.stdin.setEncoding("utf8")
+              process.stdin.on("data", chunk => { source += chunk })
+              process.stdin.on("end", () => {
+                const manifest = JSON.parse(source)
+                if (manifest.name !== "nextane" || manifest.version !== process.argv[1]) {
+                  throw new Error("Downloaded package identity does not match the reserved release")
+                }
+                for (const name of ["preinstall", "install", "postinstall", "prepare"]) {
+                  if (manifest.scripts?.[name]) {
+                    throw new Error(`Downloaded package defines forbidden ${name} script`)
+                  }
+                }
+              })
+            ' "$VERSION"
+      - name: Publish with provenance and no lifecycle scripts
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+          TARBALL: ${{ needs.test.outputs.tarball }}
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          if npm view "nextane@$VERSION" version --json >/dev/null 2>&1; then
+            echo "nextane@$VERSION is already published"
+            exit 0
           fi
-          git tag -a "v${VERSION}" -m "v${VERSION}"
-          git push origin HEAD:main "v${VERSION}"
+          npm publish "release/$TARBALL" --access public --provenance --ignore-scripts

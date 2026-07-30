@@ -3,13 +3,27 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { HmrContext, Plugin, ResolvedConfig, ViteDevServer } from "vite";
+import {
+  parseAstAsync,
+  type HmrContext,
+  type Plugin,
+  type ResolvedConfig,
+  type ViteDevServer,
+} from "vite";
 import { findSpecialPage, scanPages } from "./routing/scan.ts";
 
 const CLIENT_MANIFEST_ID = "virtual:nextane-client-manifest";
 const SERVER_MANIFEST_ID = "virtual:nextane-server-manifest";
 const RESOLVED_CLIENT_MANIFEST_ID = `\0${CLIENT_MANIFEST_ID}`;
 const RESOLVED_SERVER_MANIFEST_ID = `\0${SERVER_MANIFEST_ID}`;
+const CLIENT_PAGE_QUERY = "nextane-client-page";
+const SERVER_PAGE_EXPORTS = new Set([
+  "config",
+  "getInitialProps",
+  "getServerSideProps",
+  "getStaticPaths",
+  "getStaticProps",
+]);
 const PACKAGE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -34,14 +48,480 @@ interface RoutingConfig {
   trailingSlash: boolean;
 }
 
-async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
+const UNSUPPORTED_ROUTING_FILE_NAMES = ["middleware", "proxy"];
+const ROUTING_FILE_EXTENSIONS = [
+  "cjs",
+  "cts",
+  "js",
+  "jsx",
+  "mjs",
+  "mts",
+  "ts",
+  "tsx",
+];
+const UNSUPPORTED_SECURITY_CONFIG = ["headers", "redirects", "i18n"];
+
+export function assertNoUnsupportedRoutingFiles(root: string) {
+  const unsupported = ["", "src"].flatMap((directory) =>
+    UNSUPPORTED_ROUTING_FILE_NAMES.flatMap((name) =>
+      ROUTING_FILE_EXTENSIONS.map((extension) =>
+        path.join(root, directory, `${name}.${extension}`),
+      ),
+    ),
+  ).filter(existsSync);
+  if (unsupported.length === 0) return;
+  throw new Error(
+    `[nextane] Refusing to build because Nextane does not execute Next.js ` +
+      `middleware/proxy files: ${unsupported
+        .map((file) => path.relative(root, file))
+        .join(", ")}. Remove or explicitly migrate their behavior before building.`,
+  );
+}
+
+interface AstNode {
+  type: string;
+  start: number;
+  end: number;
+  [key: string]: unknown;
+}
+
+interface TextEdit {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function astNode(value: unknown): AstNode | null {
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof (value as { type?: unknown }).type === "string" &&
+    typeof (value as { start?: unknown }).start === "number" &&
+    typeof (value as { end?: unknown }).end === "number"
+  ) {
+    return value as AstNode;
+  }
+  return null;
+}
+
+function childNodes(node: AstNode): AstNode[] {
+  const children: AstNode[] = [];
+  for (const value of Object.values(node)) {
+    const child = astNode(value);
+    if (child) {
+      children.push(child);
+      continue;
+    }
+    if (!Array.isArray(value)) continue;
+    for (const item of value) {
+      const arrayChild = astNode(item);
+      if (arrayChild) children.push(arrayChild);
+    }
+  }
+  return children;
+}
+
+function collectIdentifiers(node: AstNode): Set<string> {
+  const names = new Set<string>();
+  const visit = (current: AstNode) => {
+    if (
+      (current.type === "Identifier" || current.type === "JSXIdentifier") &&
+      typeof current.name === "string"
+    ) {
+      names.add(current.name);
+    }
+    for (const child of childNodes(current)) visit(child);
+  };
+  visit(node);
+  return names;
+}
+
+function bindingNames(pattern: AstNode | null): string[] {
+  if (!pattern) return [];
+  if (pattern.type === "Identifier" && typeof pattern.name === "string") {
+    return [pattern.name];
+  }
+  if (pattern.type === "RestElement") {
+    return bindingNames(astNode(pattern.argument));
+  }
+  if (pattern.type === "AssignmentPattern") {
+    return bindingNames(astNode(pattern.left));
+  }
+  if (pattern.type === "Property") {
+    return bindingNames(astNode(pattern.value));
+  }
+  return childNodes(pattern).flatMap(bindingNames);
+}
+
+function declarationNames(node: AstNode): string[] {
+  if (node.type === "VariableDeclaration" && Array.isArray(node.declarations)) {
+    return node.declarations.flatMap((declaration) => {
+      const item = astNode(declaration);
+      return item ? bindingNames(astNode(item.id)) : [];
+    });
+  }
+  return bindingNames(astNode(node.id));
+}
+
+function declarationFromStatement(node: AstNode): AstNode | null {
+  if (node.type === "ExportNamedDeclaration") {
+    return astNode(node.declaration);
+  }
+  if (
+    node.type.endsWith("Declaration") &&
+    node.type !== "ImportDeclaration" &&
+    node.type !== "ExportDefaultDeclaration"
+  ) {
+    return node;
+  }
+  return null;
+}
+
+function exportedName(
+  specifier: AstNode,
+  field: "local" | "exported",
+): string | null {
+  const value = astNode(specifier[field]);
+  if (!value) return null;
+  if (typeof value.name === "string") return value.name;
+  if (typeof value.value === "string") return value.value;
+  return null;
+}
+
+function applyTextEdits(source: string, edits: TextEdit[]): string {
+  let result = source;
+  for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
+    result = `${result.slice(0, edit.start)}${edit.text}${result.slice(edit.end)}`;
+  }
+  return result;
+}
+
+function isServerStaticAssignment(node: AstNode): boolean {
+  if (node.type !== "ExpressionStatement") return false;
+  const expression = astNode(node.expression);
+  if (expression?.type !== "AssignmentExpression") return false;
+  const left = astNode(expression.left);
+  if (left?.type !== "MemberExpression") return false;
+  const property = astNode(left.property);
+  const name =
+    typeof property?.name === "string"
+      ? property.name
+      : typeof property?.value === "string"
+        ? property.value
+        : null;
+  return name !== null && SERVER_PAGE_EXPORTS.has(name);
+}
+
+function moduleBody(program: AstNode): AstNode[] {
+  return Array.isArray(program.body)
+    ? program.body.flatMap((item) => {
+        const node = astNode(item);
+        return node ? [node] : [];
+      })
+    : [];
+}
+
+function declarationGraph(body: AstNode[]) {
+  return body.flatMap((statement) => {
+    const declaration = declarationFromStatement(statement);
+    if (!declaration) return [];
+    const names = declarationNames(declaration);
+    return names.length > 0
+      ? [{ node: statement, names, references: collectIdentifiers(declaration) }]
+      : [];
+  });
+}
+
+function expandDeclarationReferences(
+  initial: Set<string>,
+  declarations: ReturnType<typeof declarationGraph>,
+): Set<string> {
+  const needed = new Set(initial);
+  const expanded = new Set<AstNode>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      if (
+        expanded.has(declaration.node) ||
+        !declaration.names.some((name) => needed.has(name))
+      ) {
+        continue;
+      }
+      expanded.add(declaration.node);
+      for (const name of declaration.references) {
+        if (!needed.has(name)) {
+          needed.add(name);
+          changed = true;
+        }
+      }
+    }
+  }
+  return needed;
+}
+
+function importSpecifierName(specifier: AstNode): string | null {
+  const local = astNode(specifier.local);
+  return typeof local?.name === "string" ? local.name : null;
+}
+
+function renderImport(
+  node: AstNode,
+  keptSpecifiers: AstNode[],
+  source: string,
+): string {
+  const sourceNode = astNode(node.source);
+  if (!sourceNode) return source.slice(node.start, node.end);
+  const sourceText = source.slice(sourceNode.start, sourceNode.end);
+  const suffix = source.slice(sourceNode.end, node.end);
+  const defaultSpecifier = keptSpecifiers.find(
+    (specifier) => specifier.type === "ImportDefaultSpecifier",
+  );
+  const namespaceSpecifier = keptSpecifiers.find(
+    (specifier) => specifier.type === "ImportNamespaceSpecifier",
+  );
+  const namedSpecifiers = keptSpecifiers.filter(
+    (specifier) => specifier.type === "ImportSpecifier",
+  );
+  const clauses: string[] = [];
+  if (defaultSpecifier) {
+    clauses.push(source.slice(defaultSpecifier.start, defaultSpecifier.end));
+  }
+  if (namespaceSpecifier) {
+    clauses.push(
+      source.slice(namespaceSpecifier.start, namespaceSpecifier.end),
+    );
+  }
+  if (namedSpecifiers.length > 0) {
+    clauses.push(
+      `{ ${namedSpecifiers
+        .map((specifier) => source.slice(specifier.start, specifier.end))
+        .join(", ")} }`,
+    );
+  }
+  const typePrefix = node.importKind === "type" ? "type " : "";
+  return `import ${typePrefix}${clauses.join(", ")} from ${sourceText}${suffix}`;
+}
+
+function renderNamedExport(
+  node: AstNode,
+  keptSpecifiers: AstNode[],
+  source: string,
+): string {
+  const sourceNode = astNode(node.source);
+  const suffixStart = sourceNode
+    ? sourceNode.end
+    : keptSpecifiers.at(-1)?.end ?? node.end;
+  const sourceClause = sourceNode
+    ? ` from ${source.slice(sourceNode.start, sourceNode.end)}`
+    : "";
+  const typePrefix = node.exportKind === "type" ? "type " : "";
+  return `export ${typePrefix}{ ${keptSpecifiers
+    .map((specifier) => source.slice(specifier.start, specifier.end))
+    .join(", ")} }${sourceClause}${source.slice(suffixStart, node.end)}`;
+}
+
+export async function createClientPageSource(
+  source: string,
+  fileName = "page.tsrx",
+): Promise<string> {
+  const extension = path.extname(fileName).slice(1);
+  const language = extension === "jsx" || extension === "js" ? "jsx" : "tsx";
+  const program = astNode(await parseAstAsync(source, { lang: language }));
+  if (!program) throw new Error(`[nextane] Unable to parse client page ${fileName}`);
+
+  const edits: TextEdit[] = [];
+  const serverRoots: AstNode[] = [];
+  const serverBindings = new Set(SERVER_PAGE_EXPORTS);
+  const body = moduleBody(program);
+
+  for (const statement of body) {
+    if (statement.type !== "ExportNamedDeclaration") continue;
+    const declaration = astNode(statement.declaration);
+    if (declaration) {
+      for (const name of declarationNames(declaration)) {
+        if (SERVER_PAGE_EXPORTS.has(name)) serverBindings.add(name);
+      }
+      continue;
+    }
+    if (!Array.isArray(statement.specifiers)) continue;
+    for (const value of statement.specifiers) {
+      const specifier = astNode(value);
+      if (!specifier) continue;
+      const local = exportedName(specifier, "local");
+      const exported = exportedName(specifier, "exported");
+      if (
+        (local && SERVER_PAGE_EXPORTS.has(local)) ||
+        (exported && SERVER_PAGE_EXPORTS.has(exported))
+      ) {
+        if (local) serverBindings.add(local);
+        serverRoots.push(specifier);
+      }
+    }
+  }
+
+  for (const statement of body) {
+    if (statement.type === "ExportAllDeclaration") {
+      edits.push({ start: statement.start, end: statement.end, text: "" });
+      continue;
+    }
+    if (statement.type === "ExportNamedDeclaration") {
+      const declaration = astNode(statement.declaration);
+      if (!declaration) {
+        const specifiers = Array.isArray(statement.specifiers)
+          ? statement.specifiers.flatMap((value) => {
+              const specifier = astNode(value);
+              return specifier ? [specifier] : [];
+            })
+          : [];
+        const kept = specifiers.filter((specifier) => {
+          const local = exportedName(specifier, "local");
+          const exported = exportedName(specifier, "exported");
+          return !(
+            (local && serverBindings.has(local)) ||
+            (exported && serverBindings.has(exported))
+          );
+        });
+        edits.push({
+          start: statement.start,
+          end: statement.end,
+          text:
+            kept.length === 0
+              ? ""
+              : renderNamedExport(statement, kept, source),
+        });
+        continue;
+      }
+      const names = declarationNames(declaration);
+      const serverNames = names.filter((name) => serverBindings.has(name));
+      if (serverNames.length > 0) {
+        if (serverNames.length !== names.length) {
+          throw new Error(
+            `[nextane] ${fileName} declares server and client exports together. ` +
+              `Declare ${serverNames.join(", ")} separately so it can be excluded from the browser bundle.`,
+          );
+        }
+        serverRoots.push(declaration);
+        edits.push({ start: statement.start, end: statement.end, text: "" });
+      } else {
+        edits.push({
+          start: statement.start,
+          end: statement.end,
+          text: source.slice(declaration.start, declaration.end),
+        });
+      }
+      continue;
+    }
+    const declaration = declarationFromStatement(statement);
+    if (declaration) {
+      const names = declarationNames(declaration);
+      const serverNames = names.filter((name) => serverBindings.has(name));
+      if (serverNames.length > 0) {
+        if (serverNames.length !== names.length) {
+          throw new Error(
+            `[nextane] ${fileName} mixes server-only and client declarations. ` +
+              `Declare ${serverNames.join(", ")} separately.`,
+          );
+        }
+        serverRoots.push(declaration);
+        edits.push({ start: statement.start, end: statement.end, text: "" });
+      }
+      continue;
+    }
+    if (isServerStaticAssignment(statement)) {
+      serverRoots.push(statement);
+      edits.push({ start: statement.start, end: statement.end, text: "" });
+    }
+  }
+
+  let clientSource = applyTextEdits(source, edits);
+  const clientProgram = astNode(
+    await parseAstAsync(clientSource, { lang: language }),
+  );
+  if (!clientProgram) {
+    throw new Error(`[nextane] Unable to create client page ${fileName}`);
+  }
+  const clientBody = moduleBody(clientProgram);
+  const declarations = declarationGraph(clientBody);
+  const serverReferences = expandDeclarationReferences(
+    new Set(serverRoots.flatMap((root) => [...collectIdentifiers(root)])),
+    declarations,
+  );
+  const clientRootNodes = clientBody.filter(
+    (statement) =>
+      statement.type === "ExportDefaultDeclaration" ||
+      (!declarationFromStatement(statement) &&
+        statement.type !== "ImportDeclaration"),
+  );
+  const clientReferences = expandDeclarationReferences(
+    new Set(clientRootNodes.flatMap((root) => [...collectIdentifiers(root)])),
+    declarations,
+  );
+
+  const dependencyEdits: TextEdit[] = [];
+  for (const declaration of declarations) {
+    const serverOnly = declaration.names.filter(
+      (name) => serverReferences.has(name) && !clientReferences.has(name),
+    );
+    if (serverOnly.length === 0) continue;
+    if (serverOnly.length !== declaration.names.length) {
+      throw new Error(
+        `[nextane] ${fileName} mixes server-only dependencies with client bindings. ` +
+          `Declare ${serverOnly.join(", ")} separately.`,
+      );
+    }
+    dependencyEdits.push({
+      start: declaration.node.start,
+      end: declaration.node.end,
+      text: "",
+    });
+  }
+
+  for (const statement of clientBody) {
+    if (statement.type !== "ImportDeclaration") continue;
+    const specifiers = Array.isArray(statement.specifiers)
+      ? statement.specifiers.flatMap((value) => {
+          const specifier = astNode(value);
+          return specifier ? [specifier] : [];
+        })
+      : [];
+    if (specifiers.length === 0) continue;
+    const kept = specifiers.filter((specifier) => {
+      const name = importSpecifierName(specifier);
+      return (
+        !name ||
+        !serverReferences.has(name) ||
+        clientReferences.has(name)
+      );
+    });
+    if (kept.length === specifiers.length) continue;
+    dependencyEdits.push({
+      start: statement.start,
+      end: statement.end,
+      text:
+        kept.length === 0 ? "" : renderImport(statement, kept, clientSource),
+    });
+  }
+
+  clientSource = applyTextEdits(clientSource, dependencyEdits);
+  return clientSource;
+}
+
+export async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
+  assertNoUnsupportedRoutingFiles(root);
   const candidates = [
     "nextane.config.cjs",
     "next.config.cjs",
+    "nextane.config.cts",
+    "next.config.cts",
     "nextane.config.js",
     "next.config.js",
+    "nextane.config.ts",
+    "next.config.ts",
     "nextane.config.mjs",
     "next.config.mjs",
+    "nextane.config.mts",
+    "next.config.mts",
   ];
   const configPath = candidates
     .map((candidate) => path.join(root, candidate))
@@ -79,6 +559,16 @@ async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
     nextConfig && typeof nextConfig === "object"
       ? (nextConfig as Record<string, unknown>)
       : {};
+  const unsupportedConfig = UNSUPPORTED_SECURITY_CONFIG.filter(
+    (name) => Object.hasOwn(config, name) && config[name] != null,
+  );
+  if (unsupportedConfig.length > 0) {
+    throw new Error(
+      `[nextane] Refusing to build because these Next.js configuration APIs ` +
+        `are not implemented and may contain security policy: ${unsupportedConfig.join(", ")}. ` +
+        `Migrate them explicitly before building.`,
+    );
+  }
   const rewriteValue =
     typeof config.rewrites === "function" ? await config.rewrites() : [];
   const rewriteGroups =
@@ -127,6 +617,10 @@ function viteFileId(filePath: string): string {
   return `/@fs${filePath.split(path.sep).join("/")}`;
 }
 
+function clientPageFileId(filePath: string): string {
+  return `${viteFileId(filePath)}?${CLIENT_PAGE_QUERY}`;
+}
+
 function serializePublicRoute(route: {
   route: string;
   regexSource: string;
@@ -146,17 +640,17 @@ async function clientManifestSource(root: string): Promise<string> {
 
   const loaderEntries = routes.map(
     (route) =>
-      `${JSON.stringify(route.route)}: () => import(${JSON.stringify(viteFileId(route.filePath))})`,
+      `${JSON.stringify(route.route)}: () => import(${JSON.stringify(clientPageFileId(route.filePath))})`,
   );
 
   return `
 export const routes = [${routes.map(serializePublicRoute).join(",")}];
 export const pageLoaders = {${loaderEntries.join(",")}};
 export const appLoader = ${
-    appPath ? `() => import(${JSON.stringify(viteFileId(appPath))})` : "null"
+    appPath ? `() => import(${JSON.stringify(clientPageFileId(appPath))})` : "null"
   };
 export const errorLoader = ${
-    errorPath ? `() => import(${JSON.stringify(viteFileId(errorPath))})` : "null"
+    errorPath ? `() => import(${JSON.stringify(clientPageFileId(errorPath))})` : "null"
   };
 `;
 }
@@ -227,6 +721,37 @@ export function nextane(): Plugin {
     },
     configResolved(resolved) {
       config = resolved;
+      if (resolved.command === "build" && resolved.build.sourcemap) {
+        resolved.logger.warn(
+          "[nextane] Production browser source maps were disabled to avoid publishing application source.",
+        );
+        resolved.build.sourcemap = false;
+      }
+    },
+    async buildStart() {
+      assertNoUnsupportedRoutingFiles(config.root);
+      await loadRoutingConfig(config.root);
+    },
+    outputOptions(options) {
+      return {
+        ...options,
+        sourcemap: false,
+      };
+    },
+    generateBundle(_options, bundle) {
+      for (const [fileName, output] of Object.entries(bundle)) {
+        if (fileName.endsWith(".map")) {
+          delete bundle[fileName];
+          continue;
+        }
+        if (output.type === "chunk") {
+          output.map = null;
+          output.code = output.code.replace(
+            /\n?\/\/# sourceMappingURL=.*?(?:\n|$)/g,
+            "\n",
+          );
+        }
+      }
     },
     resolveId(id) {
       if (id === CLIENT_MANIFEST_ID) return RESOLVED_CLIENT_MANIFEST_ID;
@@ -239,6 +764,17 @@ export function nextane(): Plugin {
         return serverManifestSource(config.root, buildId);
       }
       return null;
+    },
+    async transform(code, id) {
+      const queryIndex = id.indexOf("?");
+      if (queryIndex < 0) return null;
+      const query = new URLSearchParams(id.slice(queryIndex + 1));
+      if (!query.has(CLIENT_PAGE_QUERY)) return null;
+      const fileName = id.slice(0, queryIndex);
+      return {
+        code: await createClientPageSource(code, fileName),
+        map: null,
+      };
     },
     configureServer(server) {
       const pagesDirectory = path.join(config.root, "pages");

@@ -1,4 +1,8 @@
-import { hydrateRoot, type ComponentBody, type Root } from "octane";
+import {
+  hydrateRoot,
+  type ComponentBody,
+  type Root,
+} from "octane";
 import {
   appLoader,
   pageLoaders,
@@ -9,6 +13,7 @@ import Router, {
   configureClientRouter,
   setRouterState,
 } from "./runtime/router";
+import { isSafeClientNavigationTarget } from "./runtime/navigation";
 import { DefaultNotFound } from "./runtime/default-error";
 import type {
   NextaneData,
@@ -178,6 +183,12 @@ async function navigate(
   sourceHref = href,
   hardReloadOnFailure = true,
 ): Promise<boolean> {
+  if (
+    !isSafeClientNavigationTarget(href) ||
+    !isSafeClientNavigationTarget(sourceHref)
+  ) {
+    return false;
+  }
   const url = new URL(href, window.location.href);
   const sourceUrl = new URL(
     sourceHref.includes("[") ? href : sourceHref,
@@ -212,7 +223,9 @@ async function navigate(
     }
 
     if (loaded.payload.__N_REDIRECT) {
-      window.location.assign(loaded.payload.__N_REDIRECT);
+      if (isSafeClientNavigationTarget(loaded.payload.__N_REDIRECT)) {
+        window.location.assign(loaded.payload.__N_REDIRECT);
+      }
       return false;
     }
 
@@ -273,6 +286,7 @@ async function navigate(
 configureClientRouter({
   navigate,
   async prefetch(href) {
+    if (!isSafeClientNavigationTarget(href)) return;
     const url = new URL(href, window.location.href);
     await loadNavigation(url);
   },

@@ -1,9 +1,17 @@
+import { createElement, use } from "octane";
+import { prerender } from "octane/static";
 import { describe, expect, it, vi } from "vitest";
 import Router, {
+  configureClientRouter,
   events,
   formatRouterHref,
   setRouterState,
+  useRouter,
 } from "../../src/runtime/router";
+import { isSafeClientNavigationTarget } from "../../src/runtime/navigation";
+import {
+  runWithServerRouterState,
+} from "../../src/runtime/router-server";
 
 function state(route: string, asPath: string, trailingSlash = false) {
   setRouterState({
@@ -81,5 +89,132 @@ describe("Pages Router URL and event compatibility", () => {
       "/docs/one/two?view=full",
     );
     expect(formatRouterHref("/blog/[post]")).toBe("/blog/[post]");
+  });
+
+  it("blocks executable and browser-obfuscated navigation schemes", async () => {
+    const navigate = vi.fn(async () => true);
+    configureClientRouter({
+      navigate,
+      prefetch: async () => {},
+    });
+
+    for (const target of [
+      "javascript:alert(1)",
+      " JAVA\nSCRIPT:alert(1)",
+      "\u0000java\tscript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "vbscript:msgbox(1)",
+    ]) {
+      expect(isSafeClientNavigationTarget(target)).toBe(false);
+      expect(await Router.push(target)).toBe(false);
+      expect(await Router.replace("/safe", target)).toBe(false);
+    }
+    expect(navigate).not.toHaveBeenCalled();
+
+    for (const target of [
+      "/internal?hello=world",
+      "https://example.com/path",
+      "http://example.com/path",
+      "mailto:test@example.com",
+      "tel:+15555550123",
+    ]) {
+      expect(isSafeClientNavigationTarget(target)).toBe(true);
+    }
+    expect(await Router.push("/safe")).toBe(true);
+    expect(navigate).toHaveBeenCalledWith(
+      "/safe",
+      "push",
+      undefined,
+      "/safe",
+    );
+  });
+
+  it("isolates router state across deterministically overlapping SSR renders", async () => {
+    let releaseFirst!: () => void;
+    let firstStarted!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const makeState = (asPath: string) => ({
+      route: "/posts/[id]",
+      pathname: "/posts/[id]",
+      query: { id: asPath.slice(1) },
+      asPath,
+      basePath: "",
+      isReady: true,
+      isPreview: false,
+      isFallback: false,
+      trailingSlash: false,
+    });
+
+    const first = runWithServerRouterState(makeState("/first"), async () => {
+      firstStarted();
+      await firstGate;
+      return { asPath: Router.asPath, query: Router.query };
+    });
+    await started;
+    const second = runWithServerRouterState(makeState("/second"), async () => {
+      expect(Router.asPath).toBe("/second");
+      releaseFirst();
+      await Promise.resolve();
+      return { asPath: Router.asPath, query: Router.query };
+    });
+
+    await expect(first).resolves.toEqual({
+      asPath: "/first",
+      query: { id: "first" },
+    });
+    await expect(second).resolves.toEqual({
+      asPath: "/second",
+      query: { id: "second" },
+    });
+  });
+
+  it("provides request-local router state through suspended Octane renders", async () => {
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const makeState = (asPath: string, isFallback: boolean) => ({
+      route: "/posts/[id]",
+      pathname: "/posts/[id]",
+      query: { id: asPath.slice(1) },
+      asPath,
+      basePath: "",
+      isReady: true,
+      isPreview: false,
+      isFallback,
+      trailingSlash: false,
+    });
+    function Probe({ gate }: { gate: Promise<void> }) {
+      use(gate);
+      const router = useRouter();
+      return createElement(
+        "p",
+        {},
+        `${router.asPath}:${router.query.id}:${router.isFallback}`,
+      );
+    }
+    const render = (
+      routerState: ReturnType<typeof makeState>,
+      gate: Promise<void>,
+    ) =>
+      runWithServerRouterState(routerState, () =>
+        prerender(Probe as never, { gate }),
+      );
+
+    const first = render(makeState("/first", true), firstGate);
+    const second = render(makeState("/second", false), secondGate);
+    releaseSecond();
+    expect((await second).html).toContain("<p>/second:second:false</p>");
+    releaseFirst();
+    expect((await first).html).toContain("<p>/first:first:true</p>");
   });
 });

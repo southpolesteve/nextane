@@ -16,6 +16,8 @@ export type {
   NextApiRequest,
   NextApiResponse,
   NextaneRouter,
+  PageConfig,
   ParsedUrlQuery,
   Redirect,
+  SizeLimit,
 } from "./types";

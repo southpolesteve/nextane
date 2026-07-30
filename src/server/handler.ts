@@ -4,7 +4,9 @@ import {
   DefaultNotFound,
   DefaultServerError,
 } from "../runtime/default-error";
-import { setRouterState } from "../runtime/router";
+import {
+  runWithServerRouterState,
+} from "../runtime/router-server";
 import { matchRoute } from "../routing/match";
 import type { ClientRoute } from "../routing/types";
 import type {
@@ -32,6 +34,7 @@ export interface NextaneEnvironment {
 }
 
 export interface NextaneManifest {
+  buildId?: string;
   routes: ServerRouteManifest[];
   loadApp: null | (() => Promise<Record<string, unknown>>);
   loadDocument: null | (() => Promise<Record<string, unknown>>);
@@ -60,6 +63,7 @@ interface PageResolution {
 }
 
 export interface RenderArtifact {
+  buildId?: string;
   route: string;
   pageProps: Record<string, unknown>;
   appProps?: Record<string, unknown>;
@@ -80,6 +84,7 @@ export interface RenderArtifact {
   documentCss?: string;
   crossOrigin?: string;
   trailingSlash?: boolean;
+  cacheable?: boolean;
   generatedAt: number;
 }
 
@@ -116,17 +121,43 @@ function searchQuery(url: URL, params: ParsedUrlQuery): ParsedUrlQuery {
 }
 
 function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replace(/[.*+?^${}()|[\]\\]/g, (character) => `\\${character}`);
+}
+
+function rewriteParameterMatches(source: string): RegExpMatchArray[] {
+  return [...source.matchAll(/:([A-Za-z0-9_]+)([+*?])?/g)];
+}
+
+function validateRewriteSource(source: string): void {
+  const parameters = rewriteParameterMatches(source);
+  const greedyParameters = parameters.filter(
+    (match) => match[2] === "+" || match[2] === "*",
+  );
+  if (greedyParameters.length > 1) {
+    throw new Error(
+      `Unsupported ambiguous rewrite source "${source}": only one * or + parameter is allowed`,
+    );
+  }
+  for (let index = 1; index < parameters.length; index += 1) {
+    const previous = parameters[index - 1];
+    const previousEnd = (previous.index ?? 0) + previous[0].length;
+    if (parameters[index].index === previousEnd) {
+      throw new Error(
+        `Unsupported ambiguous rewrite source "${source}": parameters must be separated by literal text`,
+      );
+    }
+  }
 }
 
 function matchRewrite(
   source: string,
   pathname: string,
 ): Record<string, string> | null {
+  const parameterMatches = rewriteParameterMatches(source);
   const names: string[] = [];
   let pattern = "^";
   let cursor = 0;
-  for (const match of source.matchAll(/:([A-Za-z0-9_]+)([+*?])?/g)) {
+  for (const match of parameterMatches) {
     pattern += escapeRegex(source.slice(cursor, match.index));
     names.push(match[1]);
     if (match[2] === "+") pattern += "(.+)";
@@ -389,10 +420,33 @@ function redirectStatus(redirect: Redirect): number {
 
 function safeJson(value: unknown): string {
   return JSON.stringify(value)
-    .replace(/</g, "\\u003c")
-    .replace(/>/g, "\\u003e")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
+    .replace(/</g, () => "\\u003c")
+    .replace(/>/g, () => "\\u003e")
+    .replace(/\u2028/g, () => "\\u2028")
+    .replace(/\u2029/g, () => "\\u2029");
+}
+
+function escapeHtml(value: string): string {
+  const escaped: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  };
+  return value.replace(/[&<>"']/g, (character) => escaped[character]);
+}
+
+function replaceLiteral(source: string, search: string, replacement: string): string {
+  return source.replace(search, () => replacement);
+}
+
+function hasSetCookie(response: ResponseSnapshot | undefined): boolean {
+  return (
+    response?.headers.some(
+      ([name]) => name.toLowerCase() === "set-cookie",
+    ) ?? false
+  );
 }
 
 async function getTemplate(request: Request, env: NextaneEnvironment): Promise<string> {
@@ -434,7 +488,7 @@ function stampResourceAttributes(
       if (/\bcrossorigin(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?/i.test(next)) {
         next = next.replace(
           /\s+crossorigin(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?/i,
-          ` crossorigin="${attributes.crossOrigin}"`,
+          () => ` crossorigin="${attributes.crossOrigin}"`,
         );
       } else {
         next += ` crossorigin="${attributes.crossOrigin}"`;
@@ -464,10 +518,15 @@ function renderDocumentShell(
 ): string {
   const templateHead =
     /<head[^>]*>([\s\S]*?)<\/head>/i.exec(template)?.[1] ?? "";
-  const hydratedHead = templateHead
-    .replace("<!--nextane-head-->", stampManagedHead(artifact.head ?? ""))
-    .replace("<!--nextane-styles-->", artifact.css ?? "")
-    .replace(/<script\b[\s\S]*?<\/script>/gi, "");
+  const hydratedHead = replaceLiteral(
+    replaceLiteral(
+      templateHead,
+      "<!--nextane-head-->",
+      stampManagedHead(artifact.head ?? ""),
+    ),
+    "<!--nextane-styles-->",
+    artifact.css ?? "",
+  ).replace(/<script\b[\s\S]*?<\/script>/gi, () => "");
   const templateScripts = [...template.matchAll(/<script\b[\s\S]*?<\/script>/gi)]
     .map((match) => match[0])
     .filter((script) => /\bsrc=/.test(script))
@@ -491,7 +550,7 @@ function renderDocumentShell(
   );
   html = html.replace(
     /<nextane-main\b[^>]*><\/nextane-main>/i,
-    `<div id="__next">${artifact.html ?? ""}</div>`,
+    () => `<div id="__next">${artifact.html ?? ""}</div>`,
   );
   html = html.replace(
     /<nextane-script\b([^>]*)><\/nextane-script>/i,
@@ -526,12 +585,23 @@ async function createRenderArtifact(
     throw new Error(`Page ${route.route} does not export a default Octane component`);
   }
 
-  const appModule = manifest.loadApp ? await manifest.loadApp() : null;
+  const [appModule, documentModule] = await Promise.all([
+    manifest.loadApp ? manifest.loadApp() : Promise.resolve(null),
+    manifest.loadDocument ? manifest.loadDocument() : Promise.resolve(null),
+  ]);
   const App = appModule?.default as
     | (ComponentBody<Record<string, unknown>> & {
         getInitialProps?: (context: Record<string, unknown>) => unknown;
       })
     | undefined;
+  const Document = documentModule?.default as
+    | (ComponentBody<Record<string, unknown>> & {
+        getInitialProps?: (context: Record<string, unknown>) => unknown;
+      })
+    | undefined;
+  const requestDependentInitialProps =
+    typeof App?.getInitialProps === "function" ||
+    typeof Document?.getInitialProps === "function";
   const response = new PageResponse();
   const resolution = forcedPageProps
     ? {
@@ -593,7 +663,8 @@ async function createRenderArtifact(
     warnForLargePageData(route, displayUrl, resolution.pageProps);
   }
 
-  const baseArtifact = {
+  const baseArtifact: RenderArtifact = {
+    buildId: manifest.buildId ?? BUILD_ID,
     route: route.route,
     pageProps: resolution.pageProps,
     ...(Object.keys(appProps).length > 0 ? { appProps } : {}),
@@ -601,13 +672,19 @@ async function createRenderArtifact(
     gsp: resolution.gsp,
     gssp: resolution.gssp,
     isFallback: fallbackShell,
-    resolvedPath: `${pageUrl.pathname}${pageUrl.search}`,
+    resolvedPath: resolution.gsp
+      ? pageUrl.pathname
+      : `${pageUrl.pathname}${pageUrl.search}`,
     revalidate: resolution.revalidate,
     notFound: resolution.notFound,
     redirect: resolution.redirect,
     response: resolution.response,
     crossOrigin: manifest.config?.crossOrigin,
     trailingSlash: manifest.config?.trailingSlash,
+    cacheable:
+      resolution.gsp &&
+      !requestDependentInitialProps &&
+      !hasSetCookie(resolution.response),
     generatedAt: Date.now(),
   };
   if (
@@ -630,7 +707,6 @@ async function createRenderArtifact(
     isFallback: fallbackShell,
     trailingSlash: manifest.config?.trailingSlash,
   };
-  setRouterState(router);
 
   type RenderEnhancements =
     | ((component: ComponentBody<Record<string, unknown>>) => ComponentBody<Record<string, unknown>>)
@@ -643,106 +719,102 @@ async function createRenderArtifact(
         ) => ComponentBody<Record<string, unknown>>;
       };
 
-  const renderPage = async (enhancements?: RenderEnhancements) => {
-    const options =
-      typeof enhancements === "function"
-        ? { enhanceComponent: enhancements }
-        : enhancements ?? {};
-    const RenderPage = options.enhanceComponent
-      ? options.enhanceComponent(Page)
-      : Page;
-    const RenderApp =
-      App && options.enhanceApp ? options.enhanceApp(App) : App;
+  return runWithServerRouterState(router, async () => {
+    const renderPage = async (enhancements?: RenderEnhancements) => {
+      const options =
+        typeof enhancements === "function"
+          ? { enhanceComponent: enhancements }
+          : enhancements ?? {};
+      const RenderPage = options.enhanceComponent
+        ? options.enhanceComponent(Page)
+        : Page;
+      const RenderApp =
+        App && options.enhanceApp ? options.enhanceApp(App) : App;
 
-    return RenderApp
-      ? prerender(
-          RenderApp as never,
-          {
+      const component = RenderApp ?? RenderPage;
+      const props = RenderApp
+        ? {
             ...appProps,
             Component: RenderPage,
             pageProps: resolution.pageProps,
             router,
-          },
-          { headChannel: "separate", signal: request.signal },
-        )
-      : prerender(RenderPage as never, resolution.pageProps, {
-          headChannel: "separate",
-          signal: request.signal,
-        });
-  };
-
-  let renderResult = await renderPage();
-  let documentHtml: string | undefined;
-  let documentHead: string | undefined;
-  let documentCss: string | undefined;
-  if (manifest.loadDocument) {
-    const documentModule = await manifest.loadDocument();
-    const Document = documentModule.default as
-      | (ComponentBody<Record<string, unknown>> & {
-          getInitialProps?: (context: Record<string, unknown>) => unknown;
-        })
-      | undefined;
-    if (typeof Document !== "function") {
-      throw new Error("pages/_document must export a default Octane component");
-    }
-
-    let documentProps: Record<string, unknown> = {};
-    if (typeof Document.getInitialProps === "function") {
-      const initial = await Document.getInitialProps({
-        req,
-        res: response,
-        pathname: route.route,
-        query,
-        asPath: `${displayUrl.pathname}${displayUrl.search}`,
-        async renderPage(enhancements?: RenderEnhancements) {
-          renderResult = await renderPage(enhancements);
-          return {
-            html: renderResult.html,
-            head: renderResult.head,
-            styles: renderResult.css,
-          };
-        },
+          }
+        : resolution.pageProps;
+      return prerender(component as never, props, {
+        headChannel: "separate",
+        signal: request.signal,
       });
-      if (initial && typeof initial === "object") {
-        documentProps = initial as Record<string, unknown>;
+    };
+
+    let renderResult = await renderPage();
+    let documentHtml: string | undefined;
+    let documentHead: string | undefined;
+    let documentCss: string | undefined;
+    if (documentModule) {
+      if (typeof Document !== "function") {
+        throw new Error("pages/_document must export a default Octane component");
       }
+
+      let documentProps: Record<string, unknown> = {};
+      if (typeof Document.getInitialProps === "function") {
+        const initial = await Document.getInitialProps({
+          req,
+          res: response,
+          pathname: route.route,
+          query,
+          asPath: `${displayUrl.pathname}${displayUrl.search}`,
+          async renderPage(enhancements?: RenderEnhancements) {
+            renderResult = await renderPage(enhancements);
+            return {
+              html: renderResult.html,
+              head: renderResult.head,
+              styles: renderResult.css,
+            };
+          },
+        });
+        if (initial && typeof initial === "object") {
+          documentProps = initial as Record<string, unknown>;
+        }
+      }
+
+      const documentRender = await prerender(
+        Document as never,
+        {
+          ...documentProps,
+          html: renderResult.html,
+          head: renderResult.head,
+          styles: renderResult.css,
+          __NEXT_DATA__: {
+            props: {
+              ...appProps,
+              pageProps: resolution.pageProps,
+            },
+            page: route.route,
+            query,
+            buildId: manifest.buildId ?? BUILD_ID,
+            isFallback: fallbackShell,
+          },
+        },
+        { signal: request.signal },
+      );
+      documentHtml = documentRender.html;
+      documentHead = documentRender.head;
+      documentCss = documentRender.css;
     }
 
-    const documentRender = await prerender(
-      Document as never,
-      {
-        ...documentProps,
-        html: renderResult.html,
-        head: renderResult.head,
-        styles: renderResult.css,
-        __NEXT_DATA__: {
-          props: {
-            ...appProps,
-            pageProps: resolution.pageProps,
-          },
-          page: route.route,
-          query,
-          buildId: BUILD_ID,
-          isFallback: fallbackShell,
-        },
-      },
-      { signal: request.signal },
-    );
-    documentHtml = documentRender.html;
-    documentHead = documentRender.head;
-    documentCss = documentRender.css;
-  }
-
-  return {
-    ...baseArtifact,
-    response: response.snapshot(),
-    html: renderResult.html,
-    css: renderResult.css,
-    head: renderResult.head,
-    documentHtml,
-    documentHead,
-    documentCss,
-  };
+    const finalResponse = response.snapshot();
+    return {
+      ...baseArtifact,
+      response: finalResponse,
+      cacheable: baseArtifact.cacheable && !hasSetCookie(finalResponse),
+      html: renderResult.html,
+      css: renderResult.css,
+      head: renderResult.head,
+      documentHtml,
+      documentHead,
+      documentCss,
+    };
+  });
 }
 
 function warnForLargePageData(
@@ -787,10 +859,14 @@ async function renderArtifactResponse(
   cacheStatus?: string | null,
 ): Promise<Response> {
   if (artifact.response?.ended) {
+    const headers = new Headers(artifact.response.headers);
+    if (artifact.gsp && !artifact.cacheable) {
+      headers.set("cache-control", "private, no-store");
+    }
     return new Response(artifact.response.body ?? null, {
       status: artifact.response.status,
       statusText: artifact.response.statusMessage,
-      headers: artifact.response.headers,
+      headers,
     });
   }
   if (artifact.redirect) {
@@ -808,7 +884,7 @@ async function renderArtifactResponse(
     },
     page: artifact.route,
     query: artifact.query,
-    buildId: BUILD_ID,
+    buildId: artifact.buildId ?? BUILD_ID,
     isFallback: artifact.isFallback === true,
     resolvedPath: artifact.resolvedPath,
     ...(artifact.gsp ? { gsp: true } : {}),
@@ -825,18 +901,30 @@ async function renderArtifactResponse(
         artifact,
         dataScript,
       )
-    : template
-        .replace("<!--nextane-head-->", stampManagedHead(artifact.head ?? ""))
-        .replace("<!--nextane-styles-->", artifact.css ?? "")
-        .replace('<div id="__next"></div>', `<div id="__next">${artifact.html ?? ""}</div>`)
-        .replace("<!--nextane-data-->", dataScript);
+    : replaceLiteral(
+        replaceLiteral(
+          replaceLiteral(
+            replaceLiteral(
+              template,
+              "<!--nextane-head-->",
+              stampManagedHead(artifact.head ?? ""),
+            ),
+            "<!--nextane-styles-->",
+            artifact.css ?? "",
+          ),
+          '<div id="__next"></div>',
+          `<div id="__next">${artifact.html ?? ""}</div>`,
+        ),
+        "<!--nextane-data-->",
+        dataScript,
+      );
 
   const headers = new Headers({
     "content-type": "text/html; charset=utf-8",
     "x-powered-by": "Nextane",
     "cache-control": artifact.gssp
       ? "private, no-cache, no-store, max-age=0, must-revalidate"
-      : artifact.gsp
+      : artifact.gsp && artifact.cacheable
         ? "public, max-age=0, must-revalidate"
         : "private, no-store",
     "x-nextane-generated-at": String(artifact.generatedAt),
@@ -844,6 +932,9 @@ async function renderArtifactResponse(
   for (const [name, value] of artifact.response?.headers ?? []) {
     if (name.toLowerCase() === "set-cookie") headers.append(name, value);
     else headers.set(name, value);
+  }
+  if (artifact.gsp && !artifact.cacheable) {
+    headers.set("cache-control", "private, no-store");
   }
   if (typeof artifact.revalidate === "number") {
     headers.set("x-nextane-revalidate", String(artifact.revalidate));
@@ -985,15 +1076,47 @@ async function renderServerError(
   );
 }
 
-function dataPathFromRequest(pathname: string): string | null {
-  const match = /^\/_next\/data\/[^/]+\/(.+)\.json$/.exec(pathname);
-  if (!match) return null;
-  return match[1] === "index" ? "/" : `/${match[1]}`;
+function dataPathFromRequest(pathname: string, buildId: string): string | null {
+  const match = /^\/_next\/data\/([^/]+)\/(.+)\.json$/.exec(pathname);
+  if (!match || match[1] !== buildId) return null;
+  return match[2] === "index" ? "/" : `/${match[2]}`;
 }
 
 async function routeUsesStaticProps(route: ServerRouteManifest): Promise<boolean> {
   const pageModule = await route.load();
   return typeof pageModule.getStaticProps === "function";
+}
+
+async function manifestUsesRequestInitialProps(
+  manifest: NextaneManifest,
+): Promise<boolean> {
+  const [appModule, documentModule] = await Promise.all([
+    manifest.loadApp ? manifest.loadApp() : Promise.resolve(null),
+    manifest.loadDocument ? manifest.loadDocument() : Promise.resolve(null),
+  ]);
+  const App = appModule?.default as { getInitialProps?: unknown } | undefined;
+  const Document = documentModule?.default as
+    | { getInitialProps?: unknown }
+    | undefined;
+  return (
+    typeof App?.getInitialProps === "function" ||
+    typeof Document?.getInitialProps === "function"
+  );
+}
+
+function canonicalStaticRequest(
+  pageUrl: URL,
+  request: Request,
+  onlyCached = false,
+): Request {
+  const canonicalUrl = new URL(pageUrl.pathname, "https://nextane.internal");
+  const headers = new Headers();
+  if (onlyCached) headers.set("x-nextane-only-cached", "1");
+  return new Request(canonicalUrl, {
+    method: "GET",
+    headers,
+    signal: request.signal,
+  });
 }
 
 async function loadArtifact(
@@ -1008,16 +1131,30 @@ async function loadArtifact(
   resolvedUrl = pageUrl,
 ): Promise<{ artifact: RenderArtifact; cacheStatus?: string | null }> {
   const usesStaticProps = await routeUsesStaticProps(route);
+  const usesRequestInitialProps =
+    usesStaticProps && (await manifestUsesRequestInitialProps(manifest));
+  const canUseSharedArtifact = usesStaticProps && !usesRequestInitialProps;
+  const artifactRequest = canUseSharedArtifact
+    ? canonicalStaticRequest(pageUrl, request)
+    : request;
+  const artifactPageUrl = canUseSharedArtifact
+    ? new URL(artifactRequest.url)
+    : pageUrl;
+  const artifactDisplayUrl = canUseSharedArtifact
+    ? artifactPageUrl
+    : displayUrl;
+  const artifactResolvedUrl = canUseSharedArtifact
+    ? artifactPageUrl
+    : resolvedUrl;
+
   if (usesStaticProps) {
     if (shouldRender) {
       const pageModule = await route.load();
       const staticPath = await staticPathInfo(pageModule, params, pageUrl);
       if (!staticPath.matched && staticPath.fallback === true) {
-        if (options.loadCachedArtifact) {
-          const headers = new Headers(request.headers);
-          headers.set("x-nextane-only-cached", "1");
+        if (options.loadCachedArtifact && canUseSharedArtifact) {
           const response = await options.loadCachedArtifact(
-            new Request(pageUrl, { ...request, headers }),
+            canonicalStaticRequest(pageUrl, request, true),
             route,
           );
           if (response.ok) {
@@ -1038,13 +1175,13 @@ async function loadArtifact(
           artifact: await createRenderArtifact(
             manifest,
             route,
-            request,
+            artifactRequest,
             params,
-            pageUrl,
+            artifactPageUrl,
             undefined,
             true,
-            displayUrl,
-            resolvedUrl,
+            artifactDisplayUrl,
+            artifactResolvedUrl,
             true,
           ),
         };
@@ -1052,9 +1189,9 @@ async function loadArtifact(
     }
   }
 
-  if (options.loadCachedArtifact && usesStaticProps) {
+  if (options.loadCachedArtifact && canUseSharedArtifact) {
     const response = await options.loadCachedArtifact(
-      new Request(pageUrl, request),
+      artifactRequest,
       route,
     );
     if (!response.ok) {
@@ -1069,13 +1206,13 @@ async function loadArtifact(
     artifact: await createRenderArtifact(
       manifest,
       route,
-      request,
+      artifactRequest,
       params,
-      pageUrl,
+      artifactPageUrl,
       undefined,
       shouldRender,
-      displayUrl,
-      resolvedUrl,
+      artifactDisplayUrl,
+      artifactResolvedUrl,
     ),
   };
 }
@@ -1091,15 +1228,26 @@ export function createIsrArtifactHandler(manifest: NextaneManifest) {
     if (!(await routeUsesStaticProps(match.route))) {
       return new Response("Route does not export getStaticProps", { status: 400 });
     }
+    if (await manifestUsesRequestInitialProps(manifest)) {
+      return new Response(
+        "Route uses request-dependent _app or _document initial props",
+        {
+          status: 409,
+          headers: { "cache-control": "private, no-store" },
+        },
+      );
+    }
     if (request.headers.get("x-nextane-only-cached") === "1") {
       return new Response("ISR artifact not cached", { status: 404 });
     }
 
+    const artifactRequest = canonicalStaticRequest(url, request);
     const artifact = await createRenderArtifact(
       manifest,
       match.route,
-      request,
+      artifactRequest,
       match.params,
+      new URL(artifactRequest.url),
     );
     const revalidate =
       artifact.revalidate === true
@@ -1107,12 +1255,14 @@ export function createIsrArtifactHandler(manifest: NextaneManifest) {
         : typeof artifact.revalidate === "number" && artifact.revalidate > 0
           ? artifact.revalidate
           : 31536000;
-    const cacheControl = [
-      "public",
-      `max-age=${revalidate}`,
-      "stale-while-revalidate=31536000",
-      "stale-if-error=31536000",
-    ].join(", ");
+    const cacheControl = artifact.cacheable
+      ? [
+          "public",
+          `max-age=${revalidate}`,
+          "stale-while-revalidate=31536000",
+          "stale-if-error=31536000",
+        ].join(", ")
+      : "private, no-store";
     const cacheTag = cacheTagForPath(url.pathname);
 
     return Response.json(artifact, {
@@ -1125,11 +1275,54 @@ export function createIsrArtifactHandler(manifest: NextaneManifest) {
   };
 }
 
+const RESERVED_REQUEST_HEADERS = [
+  "x-nextane-only-cached",
+  "x-nextane-cache-status",
+  "x-nextane-generated-at",
+  "x-nextane-revalidate",
+] as const;
+
+function stripReservedRequestHeaders(request: Request): Request {
+  if (!RESERVED_REQUEST_HEADERS.some((name) => request.headers.has(name))) {
+    return request;
+  }
+  const headers = new Headers(request.headers);
+  for (const name of RESERVED_REQUEST_HEADERS) headers.delete(name);
+  const sanitized = new Request(request, { headers });
+  if ("cf" in request) {
+    Object.defineProperty(sanitized, "cf", {
+      value: (request as Request & { cf?: unknown }).cf,
+      configurable: true,
+    });
+  }
+  return sanitized;
+}
+
+function withDefaultSecurityHeaders(response: Response): Response {
+  if (response.status === 101) return response;
+  const headers = new Headers(response.headers);
+  if (!headers.has("x-content-type-options")) {
+    headers.set("x-content-type-options", "nosniff");
+  }
+  if (!headers.has("referrer-policy")) {
+    headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export function createNextaneHandler(
   manifest: NextaneManifest,
   options: HandlerOptions = {},
 ) {
-  return async function handle(
+  for (const rewrite of manifest.config?.rewrites ?? []) {
+    validateRewriteSource(rewrite.source);
+  }
+
+  const handleRequest = async function handleRequest(
     request: Request,
     env: NextaneEnvironment,
   ): Promise<Response> {
@@ -1158,7 +1351,35 @@ export function createNextaneHandler(
         }
       }
 
-      const dataPath = dataPathFromRequest(url.pathname);
+      const isDataRequest = url.pathname.startsWith("/_next/data/");
+      if (
+        isDataRequest &&
+        request.method !== "GET" &&
+        request.method !== "HEAD"
+      ) {
+        return Response.json(
+          { error: "Method Not Allowed" },
+          {
+            status: 405,
+            headers: { allow: "GET, HEAD", "cache-control": "private, no-store" },
+          },
+        );
+      }
+      const dataPath = isDataRequest
+        ? dataPathFromRequest(
+            url.pathname,
+            manifest.buildId ?? BUILD_ID,
+          )
+        : null;
+      if (isDataRequest && !dataPath) {
+        return Response.json(
+          { notFound: true },
+          {
+            status: 404,
+            headers: { "cache-control": "private, no-store" },
+          },
+        );
+      }
       if (dataPath) {
         const match = matchRoute(
           manifest.routes.filter((route) => route.kind === "page"),
@@ -1178,21 +1399,32 @@ export function createNextaneHandler(
         );
         if (artifact.response?.ended) {
           const responseHeaders = new Headers(artifact.response.headers);
+          if (artifact.gsp && !artifact.cacheable) {
+            responseHeaders.set("cache-control", "private, no-store");
+          }
           const location = responseHeaders.get("location");
           if (
             location &&
             artifact.response.status >= 300 &&
             artifact.response.status < 400
           ) {
-            return Response.json({
-              __N_REDIRECT: location,
-              __N_REDIRECT_STATUS: artifact.response.status,
-            });
+            return Response.json(
+              {
+                __N_REDIRECT: location,
+                __N_REDIRECT_STATUS: artifact.response.status,
+              },
+              {
+                headers:
+                  artifact.gsp && !artifact.cacheable
+                    ? { "cache-control": "private, no-store" }
+                    : undefined,
+              },
+            );
           }
           return new Response(artifact.response.body ?? null, {
             status: artifact.response.status,
             statusText: artifact.response.statusMessage,
-            headers: artifact.response.headers,
+            headers: responseHeaders,
           });
         }
         const headers = new Headers({
@@ -1203,12 +1435,16 @@ export function createNextaneHandler(
                 "cache-control":
                   "private, no-cache, no-store, max-age=0, must-revalidate",
               }
-            : artifact.gsp
+            : artifact.gsp && artifact.cacheable
               ? { "cache-control": "public, max-age=0, must-revalidate" }
-              : {}),
+              : { "cache-control": "private, no-store" }),
         });
         for (const [name, value] of artifact.response?.headers ?? []) {
-          headers.set(name, value);
+          if (name.toLowerCase() === "set-cookie") headers.append(name, value);
+          else headers.set(name, value);
+        }
+        if (artifact.gsp && !artifact.cacheable) {
+          headers.set("cache-control", "private, no-store");
         }
         return Response.json(artifactData(artifact), {
           status: artifact.notFound ? 404 : 200,
@@ -1269,7 +1505,11 @@ export function createNextaneHandler(
       }
       return new Response(
         import.meta.env?.DEV
-          ? `<pre>${String(error instanceof Error ? error.stack ?? error.message : error)}</pre>`
+          ? `<pre>${escapeHtml(
+              String(
+                error instanceof Error ? error.stack ?? error.message : error,
+              ),
+            )}</pre>`
           : "Internal Server Error",
         {
           status: 500,
@@ -1277,5 +1517,14 @@ export function createNextaneHandler(
         },
       );
     }
+  };
+
+  return async function handle(
+    request: Request,
+    env: NextaneEnvironment,
+  ): Promise<Response> {
+    return withDefaultSecurityHeaders(
+      await handleRequest(stripReservedRequestHeaders(request), env),
+    );
   };
 }

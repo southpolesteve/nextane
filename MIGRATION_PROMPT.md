@@ -25,7 +25,7 @@ First, inventory the application:
 
 Then migrate it:
 1. Add nextane, octane, @octanejs/vite-plugin,
-   @octanejs/adapter-cloudflare, @cloudflare/vite-plugin, vite, wrangler, and
+   @cloudflare/vite-plugin, vite, wrangler, and
    TypeScript as appropriate.
 2. Replace Next.js scripts with Vite/Nextane dev and build scripts plus a
    Cloudflare Workers deploy script.
@@ -55,9 +55,12 @@ Then migrate it:
    behavior to Web APIs.
 9. Preserve CSS and assets through Vite. Translate aliases and environment
    variables deliberately; never expose a server secret to the client.
-10. Translate next.config redirects, rewrites, headers, basePath, locales, or
-    middleware only when Nextane supports an equivalent. Otherwise document
-    each gap and do not pretend it works.
+10. Nextane refuses to build while Next.js middleware/proxy files or
+    `headers`, `redirects`, or `i18n` config remain, because silently dropping
+    them can remove security policy or routing behavior. Explicitly migrate
+    each behavior to a supported equivalent, then remove the unsupported file
+    or config key. Preserve supported rewrites; report other gaps such as
+    `basePath` rather than pretending they work.
 
 Verify the result:
 - Run typechecking, unit tests, a production build, and browser tests.

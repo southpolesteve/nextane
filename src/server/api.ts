@@ -5,14 +5,142 @@ import type {
 } from "../types";
 import { createPageRequest } from "./http";
 
-async function parseBody(request: Request): Promise<unknown> {
-  if (request.method === "GET" || request.method === "HEAD") return undefined;
-  const contentType = request.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) return request.json();
-  if (contentType.includes("application/x-www-form-urlencoded")) {
-    return Object.fromEntries(await request.formData());
+const DEFAULT_BODY_LIMIT = 1024 * 1024;
+
+class ApiBodyTooLargeError extends Error {
+  readonly statusCode = 413;
+
+  constructor(readonly limit: number) {
+    super(`Body exceeded ${limit} byte limit`);
+    this.name = "ApiBodyTooLargeError";
   }
-  return request.text();
+}
+
+function parseSizeLimit(value: unknown): number {
+  if (typeof value === "number") {
+    if (Number.isSafeInteger(value) && value >= 0) return value;
+    throw new TypeError("API body sizeLimit must be a non-negative safe integer");
+  }
+  if (typeof value !== "string") {
+    throw new TypeError("API body sizeLimit must be a number or size string");
+  }
+
+  const match = /^\s*(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?\s*$/i.exec(value);
+  if (!match) {
+    throw new TypeError(`Invalid API body sizeLimit: ${value}`);
+  }
+  const multiplier = {
+    b: 1,
+    kb: 1024,
+    mb: 1024 ** 2,
+    gb: 1024 ** 3,
+  }[(match[2] ?? "b").toLowerCase()]!;
+  const bytes = Math.floor(Number(match[1]) * multiplier);
+  if (!Number.isSafeInteger(bytes)) {
+    throw new TypeError(`API body sizeLimit is too large: ${value}`);
+  }
+  return bytes;
+}
+
+function configuredBodyParser(
+  module: Record<string, unknown>,
+): false | { sizeLimit: number } {
+  const config =
+    module.config && typeof module.config === "object"
+      ? (module.config as Record<string, unknown>)
+      : {};
+  const api =
+    config.api && typeof config.api === "object"
+      ? (config.api as Record<string, unknown>)
+      : {};
+  if (api.bodyParser === false) return false;
+  const bodyParser =
+    api.bodyParser && typeof api.bodyParser === "object"
+      ? (api.bodyParser as Record<string, unknown>)
+      : {};
+  return {
+    sizeLimit:
+      bodyParser.sizeLimit === undefined
+        ? DEFAULT_BODY_LIMIT
+        : parseSizeLimit(bodyParser.sizeLimit),
+  };
+}
+
+function declaredContentLength(request: Request): number | null {
+  const value = request.headers.get("content-length");
+  if (!value || !/^\d+$/.test(value)) return null;
+  const length = Number(value);
+  return Number.isSafeInteger(length) ? length : null;
+}
+
+async function readLimitedBody(
+  request: Request,
+  limit: number,
+): Promise<Uint8Array> {
+  const declared = declaredContentLength(request);
+  if (declared !== null && declared > limit) {
+    throw new ApiBodyTooLargeError(limit);
+  }
+  if (!request.body) return new Uint8Array();
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        try {
+          await reader.cancel();
+        } catch {
+          // A failing stream cancellation must not turn a deterministic 413
+          // into an application-visible stream error.
+        }
+        throw new ApiBodyTooLargeError(limit);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function parseFormBody(body: string): Record<string, string | string[]> {
+  const parsed: Record<string, string | string[]> = Object.create(null);
+  for (const [name, value] of new URLSearchParams(body)) {
+    const previous = parsed[name];
+    if (previous === undefined) parsed[name] = value;
+    else if (Array.isArray(previous)) previous.push(value);
+    else parsed[name] = [previous, value];
+  }
+  return parsed;
+}
+
+async function parseBody(request: Request, limit: number): Promise<unknown> {
+  if (request.method === "GET" || request.method === "HEAD") return undefined;
+  const bytes = await readLimitedBody(request, limit);
+  const body = new TextDecoder().decode(bytes);
+  const contentType = (request.headers.get("content-type") ?? "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (contentType === "application/json" || contentType === "application/ld+json") {
+    return body.length === 0 ? {} : JSON.parse(body);
+  }
+  if (contentType === "application/x-www-form-urlencoded") {
+    return parseFormBody(body);
+  }
+  return body;
 }
 
 interface ApiRuntimeOptions {
@@ -113,20 +241,11 @@ class ApiResponse<Data = unknown> implements NextApiResponse<Data> {
     this.#response = new Response(null, { status, headers: this.#headers });
   }
 
-  setPreviewData(data: unknown) {
-    const bypass = crypto.randomUUID();
-    const encoded = btoa(
-      encodeURIComponent(JSON.stringify(data)),
+  setPreviewData(data: unknown): never {
+    void data;
+    throw new Error(
+      "Nextane does not support Preview Mode; setPreviewData() cannot issue secure preview cookies",
     );
-    this.#headers.append(
-      "set-cookie",
-      `__prerender_bypass=${bypass}; Path=/; HttpOnly; SameSite=Lax`,
-    );
-    this.#headers.append(
-      "set-cookie",
-      `__next_preview_data=${encoded}; Path=/; HttpOnly; SameSite=Lax`,
-    );
-    return this;
   }
 
   async revalidate(
@@ -209,13 +328,31 @@ export async function runApiRoute(
   }
 
   const pageRequest = createPageRequest(request);
+  const bodyParser = configuredBodyParser(module);
+  let body: unknown;
+  if (bodyParser !== false) {
+    try {
+      body = await parseBody(request, bodyParser.sizeLimit);
+    } catch (error) {
+      if (error instanceof ApiBodyTooLargeError) {
+        return new Response(error.message, {
+          status: error.statusCode,
+          headers: {
+            "cache-control": "private, no-store",
+            "content-type": "text/plain; charset=utf-8",
+          },
+        });
+      }
+      throw error;
+    }
+  }
   const apiRequest: NextApiRequest = {
     method: pageRequest.method,
     url: pageRequest.url,
     headers: pageRequest.headers,
     query,
     cookies: pageRequest.cookies,
-    body: await parseBody(request),
+    body,
     raw: request,
     nextUrl,
   };

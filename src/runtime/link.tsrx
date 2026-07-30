@@ -6,6 +6,7 @@ import {
   useEffect,
 } from "octane";
 import Router, { formatRouterHref } from "./router";
+import { isSafeClientNavigationTarget } from "./navigation";
 import type { UrlObject } from "../types";
 
 export interface LinkProps {
@@ -40,15 +41,19 @@ export default function Link(props: LinkProps) {
   const resolvedHref = formatRouterHref(href);
   const destination = as ? formatRouterHref(as) : resolvedHref;
   const dataHref = resolvedHref.includes("[") ? destination : resolvedHref;
+  const safeDestination =
+    isSafeClientNavigationTarget(resolvedHref) &&
+    isSafeClientNavigationTarget(destination);
+  const anchorHref = safeDestination ? destination : "#";
   const shouldPrefetch =
     _prefetch === true || (as !== undefined && dataHref !== destination);
   const userOnClick = anchorProps.onClick;
   const external = /^(?:[a-z]+:)?\/\//i.test(destination);
 
   useEffect(() => {
-    if (!shouldPrefetch || external) return;
+    if (!shouldPrefetch || external || !safeDestination) return;
     void Router.prefetch(dataHref);
-  }, [dataHref, external, shouldPrefetch]);
+  }, [dataHref, external, safeDestination, shouldPrefetch]);
 
   function navigate(event: MouseEvent, childOnClick?: unknown) {
     if (typeof childOnClick === "function") childOnClick(event);
@@ -66,6 +71,10 @@ export default function Link(props: LinkProps) {
     ) {
       return;
     }
+    if (!safeDestination) {
+      event.preventDefault();
+      return;
+    }
     if (external) return;
     event.preventDefault();
     const options = { scroll, shallow };
@@ -78,7 +87,7 @@ export default function Link(props: LinkProps) {
     const childProps = child.props ?? {};
     const hrefProps =
       passHref || child.type === "a" || childProps.href === undefined
-        ? { href: destination }
+        ? { href: anchorHref }
         : {};
     return cloneElement(child, {
       ...hrefProps,
@@ -90,7 +99,7 @@ export default function Link(props: LinkProps) {
 
   return createElement("a", {
     ...anchorProps,
-    href: destination,
+    href: anchorHref,
     onClick(event: MouseEvent) {
       navigate(event);
     },

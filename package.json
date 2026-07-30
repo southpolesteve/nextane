@@ -33,6 +33,7 @@
     "worker.d.ts",
     "README.md",
     "MIGRATION_PROMPT.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "scripts": {
@@ -46,10 +47,12 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:package": "node scripts/test-package-install.mjs",
+    "test:package:security": "npm run build:package && node scripts/verify-package-files.mjs",
+    "test:workflow:security": "node scripts/test-workflow-security.mjs",
     "test:example": "node scripts/test-migrated-example.mjs",
     "test:upstream": "node scripts/upstream/run.mjs",
     "test:upstream:harness": "vitest run --config test/upstream/vitest.config.ts",
-    "check": "npm run typecheck && npm run test && npm run test:release && npm run test:e2e && npm run build",
+    "check": "npm run typecheck && npm run test && npm run test:release && npm run test:workflow:security && npm run test:e2e && npm run build",
     "typecheck": "tsc --noEmit",
     "deploy": "npm run build && wrangler deploy"
   },
@@ -89,7 +92,6 @@
     }
   },
   "dependencies": {
-    "@octanejs/adapter-cloudflare": "0.0.9",
     "@octanejs/vite-plugin": "0.1.19",
     "octane": "0.1.19"
   },
