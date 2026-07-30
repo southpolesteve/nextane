@@ -621,12 +621,28 @@ function clientPageFileId(filePath: string): string {
   return `${viteFileId(filePath)}?${CLIENT_PAGE_QUERY}`;
 }
 
+export function javascriptStringLiteral(value: string): string {
+  let literal = '"';
+  for (let index = 0; index < value.length; index += 1) {
+    literal += `\\u${value.charCodeAt(index).toString(16).padStart(4, "0")}`;
+  }
+  return `${literal}"`;
+}
+
+function serializeJavascriptValue(value: unknown): string {
+  const json = JSON.stringify(value);
+  if (json === undefined) {
+    throw new TypeError("Cannot serialize undefined into a virtual module");
+  }
+  return `JSON.parse(${javascriptStringLiteral(json)})`;
+}
+
 function serializePublicRoute(route: {
   route: string;
   regexSource: string;
   params: unknown;
 }): string {
-  return JSON.stringify({
+  return serializeJavascriptValue({
     route: route.route,
     regexSource: route.regexSource,
     params: route.params,
@@ -640,17 +656,21 @@ async function clientManifestSource(root: string): Promise<string> {
 
   const loaderEntries = routes.map(
     (route) =>
-      `${JSON.stringify(route.route)}: () => import(${JSON.stringify(clientPageFileId(route.filePath))})`,
+      `${javascriptStringLiteral(route.route)}: () => import(${javascriptStringLiteral(clientPageFileId(route.filePath))})`,
   );
 
   return `
 export const routes = [${routes.map(serializePublicRoute).join(",")}];
 export const pageLoaders = {${loaderEntries.join(",")}};
 export const appLoader = ${
-    appPath ? `() => import(${JSON.stringify(clientPageFileId(appPath))})` : "null"
+    appPath
+      ? `() => import(${javascriptStringLiteral(clientPageFileId(appPath))})`
+      : "null"
   };
 export const errorLoader = ${
-    errorPath ? `() => import(${JSON.stringify(clientPageFileId(errorPath))})` : "null"
+    errorPath
+      ? `() => import(${javascriptStringLiteral(clientPageFileId(errorPath))})`
+      : "null"
   };
 `;
 }
@@ -667,22 +687,28 @@ async function serverManifestSource(
 
   const routeEntries = routes.map(
     (route, index) =>
-      `{...${serializePublicRoute(route)}, kind:${JSON.stringify(route.kind)}, load: () => import(${JSON.stringify(viteFileId(route.filePath))}), id:${index}}`,
+      `{...${serializePublicRoute(route)}, kind:${javascriptStringLiteral(route.kind)}, load: () => import(${javascriptStringLiteral(viteFileId(route.filePath))}), id:${index}}`,
   );
 
   return `
-export const buildId = ${JSON.stringify(buildId)};
+export const buildId = ${javascriptStringLiteral(buildId)};
 export const routes = [${routeEntries.join(",")}];
 export const loadApp = ${
-    appPath ? `() => import(${JSON.stringify(viteFileId(appPath))})` : "null"
+    appPath
+      ? `() => import(${javascriptStringLiteral(viteFileId(appPath))})`
+      : "null"
   };
 export const loadDocument = ${
-    documentPath ? `() => import(${JSON.stringify(viteFileId(documentPath))})` : "null"
+    documentPath
+      ? `() => import(${javascriptStringLiteral(viteFileId(documentPath))})`
+      : "null"
   };
 export const loadError = ${
-    errorPath ? `() => import(${JSON.stringify(viteFileId(errorPath))})` : "null"
+    errorPath
+      ? `() => import(${javascriptStringLiteral(viteFileId(errorPath))})`
+      : "null"
   };
-export const config = ${JSON.stringify(routingConfig)};
+export const config = ${serializeJavascriptValue(routingConfig)};
 `;
 }
 

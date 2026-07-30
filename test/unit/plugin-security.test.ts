@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertNoUnsupportedRoutingFiles,
   createClientPageSource,
+  javascriptStringLiteral,
   loadRoutingConfig,
   nextane,
 } from "../../src/plugin";
@@ -24,6 +25,16 @@ async function filesBelow(directory: string): Promise<string[]> {
 }
 
 describe("client build security", () => {
+  it("encodes virtual-module strings without executable source characters", () => {
+    const value = "\";globalThis.pwned=true;//\n</script>\u2028😀";
+    const literal = javascriptStringLiteral(value);
+
+    expect(literal).toMatch(/^"(?:\\u[0-9a-f]{4})*"$/);
+    expect(JSON.parse(literal)).toBe(value);
+    expect(literal).not.toContain("globalThis");
+    expect(literal).not.toContain("</script>");
+  });
+
   it("removes server exports, dependency branches, and static initializers", async () => {
     const transformed = await createClientPageSource(
       `

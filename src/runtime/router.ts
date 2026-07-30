@@ -116,6 +116,34 @@ function routeMatchesVisiblePath(route: string, pathname: string): boolean {
   );
 }
 
+function interpolateRouteQuery(
+  route: string,
+  query: NonNullable<UrlObject["query"]>,
+): string {
+  let result = "";
+  let cursor = 0;
+
+  while (cursor < route.length) {
+    const opening = route.indexOf("[", cursor);
+    if (opening === -1) break;
+    const closing = route.indexOf("]", opening + 1);
+    if (closing === -1) break;
+
+    result += route.slice(cursor, opening);
+    const name = route.slice(opening + 1, closing);
+    const replacement = query[name];
+    if (replacement === undefined || Array.isArray(replacement)) {
+      result += route.slice(opening, closing + 1);
+    } else {
+      delete query[name];
+      result += encodeURIComponent(String(replacement));
+    }
+    cursor = closing + 1;
+  }
+
+  return `${result}${route.slice(cursor)}`;
+}
+
 function formatUrlObject(value: UrlObject): string {
   const state = currentState();
   const current = new URL(state.asPath, "https://nextane.local");
@@ -126,20 +154,7 @@ function formatUrlObject(value: UrlObject): string {
     !value.pathname &&
     routeMatchesVisiblePath(state.route, current.pathname)
   ) {
-    pathname = state.route.replace(
-      /\[([^\]]+)\]/g,
-      (segment, name: string) => {
-        const replacement = query[name];
-        if (
-          replacement === undefined ||
-          Array.isArray(replacement)
-        ) {
-          return segment;
-        }
-        delete query[name];
-        return encodeURIComponent(String(replacement));
-      },
-    );
+    pathname = interpolateRouteQuery(state.route, query);
   }
 
   const search = new URLSearchParams();
@@ -171,13 +186,24 @@ function normalizeTrailingSlash(value: string): string {
   const pathname = boundary === -1 ? value : value.slice(0, boundary);
   const suffix = boundary === -1 ? "" : value.slice(boundary);
   if (pathname === "/") return value;
-  const fileLike = /\/[^/]+\.[^/]+\/?$/.test(pathname);
+  const segmentEnd = pathname.endsWith("/")
+    ? pathname.length - 1
+    : pathname.length;
+  const segmentStart = pathname.lastIndexOf("/", segmentEnd - 1) + 1;
+  const fileLike = pathname.slice(segmentStart, segmentEnd).includes(".");
+  let withoutTrailingSlash = pathname;
+  while (
+    withoutTrailingSlash.length > 1 &&
+    withoutTrailingSlash.endsWith("/")
+  ) {
+    withoutTrailingSlash = withoutTrailingSlash.slice(0, -1);
+  }
   const normalized =
     currentState().trailingSlash && !fileLike
       ? pathname.endsWith("/")
         ? pathname
         : `${pathname}/`
-      : pathname.replace(/\/+$/, "");
+      : withoutTrailingSlash;
   return `${normalized}${suffix}`;
 }
 
@@ -288,10 +314,7 @@ const Router: NextaneRouter & {
     ) {
       return false;
     }
-    if (!runtime.navigate) {
-      if (typeof window !== "undefined") window.location.assign(destination);
-      return false;
-    }
+    if (!runtime.navigate) return false;
     return runtime.navigate(destination, "push", options, href);
   },
   async replace(url, as, options) {
@@ -303,10 +326,7 @@ const Router: NextaneRouter & {
     ) {
       return false;
     }
-    if (!runtime.navigate) {
-      if (typeof window !== "undefined") window.location.replace(destination);
-      return false;
-    }
+    if (!runtime.navigate) return false;
     return runtime.navigate(destination, "replace", options, href);
   },
   async prefetch(url) {
