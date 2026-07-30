@@ -1,0 +1,21 @@
+{
+  "name": "nextane-pages-compare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "benchmark": "node run.mjs"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "6.0.0",
+    "next": "16.2.12",
+    "nextane": "file:../..",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "vinext": "1.0.0-beta.4",
+    "vite": "8.1.5"
+  },
+  "overrides": {
+    "postcss": "8.5.25",
+    "sharp": "0.35.3"
+  }
+}

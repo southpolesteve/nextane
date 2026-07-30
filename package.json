@@ -1,0 +1,105 @@
+{
+  "name": "nextane",
+  "version": "0.1.0",
+  "description": "Next.js without React. The Pages Router rebuilt on Octane.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/southpolesteve/nextane.git"
+  },
+  "homepage": "https://github.com/southpolesteve/nextane#readme",
+  "bugs": {
+    "url": "https://github.com/southpolesteve/nextane/issues"
+  },
+  "keywords": [
+    "nextjs",
+    "pages-router",
+    "octane",
+    "vite",
+    "cloudflare-workers"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "package-dist",
+    "docs",
+    "worker.ts",
+    "worker.d.ts",
+    "README.md",
+    "MIGRATION_PROMPT.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:package": "node scripts/build-package.mjs",
+    "prepack": "npm run build:package",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:package": "node scripts/test-package-install.mjs",
+    "test:example": "node scripts/test-migrated-example.mjs",
+    "test:upstream": "node scripts/upstream/run.mjs",
+    "test:upstream:harness": "vitest run --config test/upstream/vitest.config.ts",
+    "check": "npm run typecheck && npm run test && npm run test:e2e && npm run build",
+    "typecheck": "tsc --noEmit",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./package-dist/index.js"
+    },
+    "./head": {
+      "types": "./src/runtime/head.d.ts",
+      "default": "./src/runtime/head.tsrx"
+    },
+    "./document": {
+      "types": "./src/runtime/document.d.ts",
+      "default": "./src/runtime/document.tsrx"
+    },
+    "./link": {
+      "types": "./src/runtime/link.d.ts",
+      "default": "./src/runtime/link.tsrx"
+    },
+    "./router": {
+      "types": "./src/runtime/router.d.ts",
+      "default": "./src/runtime/router.ts"
+    },
+    "./client": {
+      "types": "./src/client.d.ts",
+      "default": "./src/client.ts"
+    },
+    "./server": {
+      "types": "./src/server/handler.d.ts",
+      "default": "./src/server/handler.ts"
+    },
+    "./types": "./src/types.ts",
+    "./worker": {
+      "types": "./worker.d.ts",
+      "default": "./worker.ts"
+    }
+  },
+  "dependencies": {
+    "@octanejs/adapter-cloudflare": "0.0.9",
+    "@octanejs/vite-plugin": "0.1.19",
+    "octane": "0.1.19"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.48.0",
+    "@cloudflare/workers-types": "5.20260729.1",
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5",
+    "vitest": "^4.0.18",
+    "wrangler": "4.115.0"
+  }
+}

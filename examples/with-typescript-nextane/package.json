@@ -1,0 +1,24 @@
+{
+  "name": "with-typescript-nextane",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/vite-plugin": "1.48.0",
+    "@octanejs/vite-plugin": "0.1.19",
+    "nextane": "file:../..",
+    "octane": "0.1.19"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260729.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5",
+    "wrangler": "4.115.0"
+  }
+}

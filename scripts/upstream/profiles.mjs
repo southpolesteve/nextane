@@ -1,0 +1,130 @@
+export const upstreamSmokeSuites = [
+  {
+    id: "hello-world",
+    testFile: "test/e2e/hello-world/hello-world.test.ts",
+    signatures: ["pages/index.tsx"],
+  },
+  {
+    id: "404-page-router",
+    testFile: "test/e2e/404-page-router/index.test.ts",
+    signatures: ["pages/404.js", "components/debug-error.js"],
+  },
+  {
+    id: "dynamic-route-interpolation",
+    testFile: "test/e2e/dynamic-route-interpolation/index.test.ts",
+    signatures: ["pages/blog/[slug].js", "pages/api/dynamic/[slug].js"],
+  },
+  {
+    id: "getserversideprops",
+    testFile: "test/e2e/getserversideprops/test/index.test.ts",
+    signatures: ["pages/early-request-end.js", "pages/not-found/[slug].js", "world.txt"],
+  },
+  {
+    id: "app-document-rendering",
+    testFile: "test/e2e/app-document/rendering.test.ts",
+    signatures: ["pages/_document.js", "shared-module.js"],
+  },
+  {
+    id: "api-resolver-query-writeable",
+    testFile:
+      "test/e2e/api-resolver-query-writeable/api-resolver-query-writeable.test.ts",
+    signatures: ["pages/api/index.js", "server.js"],
+  },
+  {
+    id: "async-modules",
+    testFile: "test/e2e/async-modules/index.test.ts",
+    signatures: ["pages/config.jsx", "pages/make-error.jsx", "pages/api/hello.js"],
+  },
+  {
+    id: "edge-pages-support",
+    testFile: "test/e2e/edge-pages-support/index.test.ts",
+    signatures: ["pages/[id].js", "pages/api/[id].js", "my-adapter.js"],
+  },
+  {
+    id: "new-link-behavior",
+    testFile: "test/e2e/new-link-behavior/index.test.ts",
+    signatures: [
+      "pages/onclick-prevent-default.js",
+      "pages/multiple-children.js",
+      "pages/id-pass-through.js",
+    ],
+  },
+  {
+    id: "next-head",
+    testFile: "test/e2e/next-head/index.test.ts",
+    signatures: ["pages/_document.js", "components/meta.js"],
+    componentRoots: ["components"],
+  },
+  {
+    id: "with-router",
+    testFile: "test/e2e/with-router/index.test.ts",
+    signatures: ["pages/router-method-ssr.js", "components/header-nav.js"],
+    componentRoots: ["components"],
+  },
+  {
+    id: "use-router-with-rewrites",
+    testFile:
+      "test/e2e/use-router-with-rewrites/use-router-with-rewrites.test.ts",
+    signatures: [
+      "pages/foo.tsx",
+      "pages/rewrite-to-another-segment/[id]/foo.tsx",
+      "pages/rewrite-to-same-segment/[id]/index.tsx",
+    ],
+  },
+  {
+    id: "legacy-link-behavior-pages",
+    testFile: "test/e2e/legacy-link-behavior-pages/index.test.ts",
+    signatures: [
+      "pages/child-is-a-number/index.tsx",
+      "pages/invalid-onclick/index.tsx",
+      "pages/passHref/index.tsx",
+    ],
+  },
+  {
+    id: "edge-api-endpoints-can-receive-body",
+    testFile: "test/e2e/edge-api-endpoints-can-receive-body/index.test.ts",
+    signatures: ["pages/api/edge.js", "pages/api/index.js"],
+  },
+  {
+    id: "edge-runtime-pages-api-route",
+    testFile:
+      "test/e2e/edge-runtime-pages-api-route/edge-runtime-pages-api-route.test.ts",
+    signatures: ["pages/api/edge.js", "pages/api/node.js"],
+  },
+  {
+    id: "error-handler-not-found-req-url",
+    testFile:
+      "test/e2e/error-handler-not-found-req-url/error-handler-not-found-req-url.test.ts",
+    signatures: ["pages/[slug].tsx", "pages/_error.tsx", "pages/index.tsx"],
+  },
+  {
+    id: "trailing-slashes",
+    testFiles: [
+      "test/e2e/trailing-slashes/with-trailing-slash.test.ts",
+      "test/e2e/trailing-slashes/without-trailing-slash.test.ts",
+    ],
+    signatures: [
+      "pages/catch-all/[...slug].js",
+      "pages/external-linker.js",
+      "pages/linker.js",
+    ],
+  },
+  {
+    id: "prerender",
+    testFile: "test/e2e/prerender.test.ts",
+    signatures: [
+      "pages/blocking-fallback-once/[slug].js",
+      "pages/fallback-only/[slug].js",
+      "pages/api/manual-revalidate.js",
+    ],
+    stripSideEffectImports: ["firebase/firestore"],
+    warmupPaths: [
+      "/large-page-data",
+      "/blocking-fallback/lots-of-data",
+    ],
+  },
+];
+
+export const upstreamSmokeTestFiles = upstreamSmokeSuites.flatMap(
+  (suite) => suite.testFiles ?? [suite.testFile],
+);

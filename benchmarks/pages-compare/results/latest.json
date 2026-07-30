@@ -1,0 +1,564 @@
+{
+  "generatedAt": "2026-07-30T03:15:23.035Z",
+  "methodology": {
+    "buildRuns": 7,
+    "buildMeasurementsReused": false,
+    "requestRounds": 5,
+    "requestsPerRound": 1000,
+    "requestConcurrency": 16,
+    "warmRequestCount": 3000,
+    "buildOrder": "rotated each round"
+  },
+  "system": {
+    "platform": "darwin arm64",
+    "node": "v22.22.0",
+    "cpu": "Apple M4",
+    "logicalCpus": 10,
+    "memoryBytes": 17179869184
+  },
+  "versions": {
+    "nextjs": "16.2.12",
+    "react": "19.2.7",
+    "vinext": "1.0.0-beta.4",
+    "vinextCommit": "npm package",
+    "octane": "0.1.19",
+    "nextaneCommit": "0.1.0"
+  },
+  "projects": {
+    "nextjs": {
+      "build": {
+        "runs": [
+          1095.9,
+          1159.6,
+          1332.8,
+          1389.3,
+          1111.5,
+          1098.7,
+          1103.5
+        ],
+        "mean": 1184.5,
+        "median": 1111.5,
+        "min": 1095.9,
+        "max": 1389.3,
+        "stddev": 123.6
+      },
+      "artifacts": {
+        "client": {
+          "raw": 402220,
+          "gzip": 128236,
+          "files": 16,
+          "fileNames": [
+            "Qv2t1YJIi3hYstdOwKcfr/_buildManifest.js",
+            "Qv2t1YJIi3hYstdOwKcfr/_clientMiddlewareManifest.js",
+            "Qv2t1YJIi3hYstdOwKcfr/_ssgManifest.js",
+            "chunks/0xce80o9ye3o4.js",
+            "chunks/10dejet16_g7b.js",
+            "chunks/1646pv3p7z828.js",
+            "chunks/1hcdqbss0mrr0.js",
+            "chunks/2ab09u_hj4vcf.js",
+            "chunks/2el4rsh2lsiv4.js",
+            "chunks/2l2zj5v8ol-z8.js",
+            "chunks/3jcdn7fen80as.js",
+            "chunks/3luxm299rt6zg.js",
+            "chunks/3thc12vwhj_j3.js",
+            "chunks/turbopack-1keeb59403qcz.js",
+            "chunks/turbopack-28j03aw7duiwt.js",
+            "chunks/turbopack-3uaj2zcmbw_rb.js"
+          ]
+        },
+        "server": {
+          "raw": 157626,
+          "gzip": 50090,
+          "files": 16,
+          "fileNames": [
+            "chunks/ssr/[root-of-the-server]__031ppiv._.js",
+            "chunks/ssr/[root-of-the-server]__1s2rhzg._.js",
+            "chunks/ssr/[root-of-the-server]__20qka2-._.js",
+            "chunks/ssr/[root-of-the-server]__213_-zt._.js",
+            "chunks/ssr/[turbopack]_runtime.js",
+            "chunks/ssr/node_modules_next_1_o5zxs._.js",
+            "chunks/ssr/node_modules_next_1ushw3d._.js",
+            "chunks/ssr/node_modules_next_dist_1ajdp8_._.js",
+            "interception-route-rewrite-manifest.js",
+            "middleware-build-manifest.js",
+            "next-font-manifest.js",
+            "pages/_app.js",
+            "pages/_document.js",
+            "pages/_error.js",
+            "pages/index.js",
+            "server-reference-manifest.js"
+          ]
+        }
+      },
+      "browser": {
+        "title": "Pages rendering benchmark",
+        "normalizedText": "Pages rendering benchmark\n\nServer-rendered at <timestamp>\n\nCount: 0\nRendered row 1\nRendered row 2\nRendered row 3\nRendered row 4\nRendered row 5\nRendered row 6\nRendered row 7\nRendered row 8\nRendered row 9\nRendered row 10\nRendered row 11\nRendered row 12\nRendered row 13\nRendered row 14\nRendered row 15\nRendered row 16\nRendered row 17\nRendered row 18\nRendered row 19\nRendered row 20",
+        "hydration": "Count: 0 → Count: 1",
+        "requestedJs": {
+          "files": 8,
+          "raw": 362380,
+          "gzip": 112544,
+          "urls": [
+            {
+              "url": "/_next/static/chunks/1646pv3p7z828.js",
+              "raw": 14478,
+              "gzip": 5340
+            },
+            {
+              "url": "/_next/static/chunks/1hcdqbss0mrr0.js",
+              "raw": 16957,
+              "gzip": 6188
+            },
+            {
+              "url": "/_next/static/Qv2t1YJIi3hYstdOwKcfr/_buildManifest.js",
+              "raw": 336,
+              "gzip": 211
+            },
+            {
+              "url": "/_next/static/chunks/turbopack-3uaj2zcmbw_rb.js",
+              "raw": 10516,
+              "gzip": 4131
+            },
+            {
+              "url": "/_next/static/chunks/turbopack-28j03aw7duiwt.js",
+              "raw": 10517,
+              "gzip": 4130
+            },
+            {
+              "url": "/_next/static/Qv2t1YJIi3hYstdOwKcfr/_ssgManifest.js",
+              "raw": 76,
+              "gzip": 60
+            },
+            {
+              "url": "/_next/static/Qv2t1YJIi3hYstdOwKcfr/_clientMiddlewareManifest.js",
+              "raw": 96,
+              "gzip": 66
+            },
+            {
+              "url": "/_next/static/chunks/3jcdn7fen80as.js",
+              "raw": 309404,
+              "gzip": 92418
+            }
+          ]
+        },
+        "resourceTiming": {
+          "resources": [
+            {
+              "name": "http://127.0.0.1:4211/_next/static/chunks/1646pv3p7z828.js",
+              "transferSize": 5640,
+              "encodedBodySize": 5340,
+              "decodedBodySize": 14478
+            },
+            {
+              "name": "http://127.0.0.1:4211/_next/static/chunks/3jcdn7fen80as.js",
+              "transferSize": 92718,
+              "encodedBodySize": 92418,
+              "decodedBodySize": 309404
+            },
+            {
+              "name": "http://127.0.0.1:4211/_next/static/chunks/turbopack-3uaj2zcmbw_rb.js",
+              "transferSize": 4431,
+              "encodedBodySize": 4131,
+              "decodedBodySize": 10516
+            },
+            {
+              "name": "http://127.0.0.1:4211/_next/static/chunks/1hcdqbss0mrr0.js",
+              "transferSize": 6488,
+              "encodedBodySize": 6188,
+              "decodedBodySize": 16957
+            },
+            {
+              "name": "http://127.0.0.1:4211/_next/static/Qv2t1YJIi3hYstdOwKcfr/_buildManifest.js",
+              "transferSize": 636,
+              "encodedBodySize": 336,
+              "decodedBodySize": 336
+            },
+            {
+              "name": "http://127.0.0.1:4211/_next/static/chunks/turbopack-28j03aw7duiwt.js",
+              "transferSize": 4430,
+              "encodedBodySize": 4130,
+              "decodedBodySize": 10517
+            },
+            {
+              "name": "http://127.0.0.1:4211/_next/static/Qv2t1YJIi3hYstdOwKcfr/_ssgManifest.js",
+              "transferSize": 376,
+              "encodedBodySize": 76,
+              "decodedBodySize": 76
+            },
+            {
+              "name": "http://127.0.0.1:4211/_next/static/Qv2t1YJIi3hYstdOwKcfr/_clientMiddlewareManifest.js",
+              "transferSize": 396,
+              "encodedBodySize": 96,
+              "decodedBodySize": 96
+            }
+          ],
+          "navigation": {
+            "transferSize": 1024,
+            "encodedBodySize": 724,
+            "decodedBodySize": 2229
+          }
+        },
+        "html": {
+          "raw": 2229,
+          "gzip": 724
+        }
+      },
+      "requests": {
+        "requestsPerSecond": 4163.5,
+        "meanLatency": 3.8,
+        "p50Latency": 3.5,
+        "p95Latency": 5.8,
+        "p99Latency": 9.1,
+        "rounds": [
+          {
+            "requestsPerSecond": 3846.86958583168,
+            "meanLatency": 4.13219913799996,
+            "p50Latency": 3.827665999997407,
+            "p95Latency": 5.650125000000116,
+            "p99Latency": 9.0625
+          },
+          {
+            "requestsPerSecond": 4008.936577095903,
+            "meanLatency": 3.973495273000059,
+            "p50Latency": 3.692750000001979,
+            "p95Latency": 5.973625000005995,
+            "p99Latency": 9.439832999996725
+          },
+          {
+            "requestsPerSecond": 4606.13070746175,
+            "meanLatency": 3.4584283249999426,
+            "p50Latency": 3.325749999996333,
+            "p95Latency": 4.817332999999053,
+            "p99Latency": 5.310457999999926
+          },
+          {
+            "requestsPerSecond": 4302.942190509473,
+            "meanLatency": 3.710356015999969,
+            "p50Latency": 3.51337500000227,
+            "p95Latency": 5.7913750000006985,
+            "p99Latency": 8.46454200000153
+          },
+          {
+            "requestsPerSecond": 4163.537508008242,
+            "meanLatency": 3.8291875190000066,
+            "p50Latency": 3.4339169999948354,
+            "p95Latency": 6.140292000003683,
+            "p99Latency": 14.169958000005863
+          }
+        ]
+      }
+    },
+    "vinext": {
+      "build": {
+        "runs": [
+          472.7,
+          544.2,
+          528.5,
+          507.5,
+          484.1,
+          470.7,
+          575
+        ],
+        "mean": 511.8,
+        "median": 507.5,
+        "min": 470.7,
+        "max": 575,
+        "stddev": 39.4
+      },
+      "artifacts": {
+        "client": {
+          "raw": 297448,
+          "gzip": 94273,
+          "files": 10,
+          "fileNames": [
+            "_next/static/30126164-177c-4021-a5be-10e507c24989/_buildManifest.js",
+            "_next/static/30126164-177c-4021-a5be-10e507c24989/_ssgManifest.js",
+            "_next/static/chunks/config-matchers-MYSnu83e.js",
+            "_next/static/chunks/error-Drph6Ses.js",
+            "_next/static/chunks/framework-ttvUFOyE.js",
+            "_next/static/chunks/head-BVMNsQxM.js",
+            "_next/static/chunks/hybrid-client-route-owner-C2y5uyHL.js",
+            "_next/static/chunks/index-Bcv99n_T.js",
+            "_next/static/chunks/pages-CkaUEXrc.js",
+            "_next/static/chunks/rolldown-runtime-QTnfLwEv.js"
+          ]
+        },
+        "server": {
+          "raw": 156087,
+          "gzip": 49609,
+          "files": 2,
+          "fileNames": [
+            "_next/static/chunks/hybrid-client-route-owner-CKwPeHTy.js",
+            "entry.js"
+          ]
+        }
+      },
+      "browser": {
+        "title": "Pages rendering benchmark",
+        "normalizedText": "Pages rendering benchmark\n\nServer-rendered at <timestamp>\n\nCount: 0\nRendered row 1\nRendered row 2\nRendered row 3\nRendered row 4\nRendered row 5\nRendered row 6\nRendered row 7\nRendered row 8\nRendered row 9\nRendered row 10\nRendered row 11\nRendered row 12\nRendered row 13\nRendered row 14\nRendered row 15\nRendered row 16\nRendered row 17\nRendered row 18\nRendered row 19\nRendered row 20",
+        "hydration": "Count: 0 → Count: 1",
+        "requestedJs": {
+          "files": 5,
+          "raw": 253203,
+          "gzip": 79704,
+          "urls": [
+            {
+              "url": "/_next/static/chunks/rolldown-runtime-QTnfLwEv.js",
+              "raw": 694,
+              "gzip": 423
+            },
+            {
+              "url": "/_next/static/chunks/index-Bcv99n_T.js",
+              "raw": 58899,
+              "gzip": 18396
+            },
+            {
+              "url": "/_next/static/chunks/framework-ttvUFOyE.js",
+              "raw": 189729,
+              "gzip": 59006
+            },
+            {
+              "url": "/_next/static/chunks/pages-CkaUEXrc.js",
+              "raw": 679,
+              "gzip": 377
+            },
+            {
+              "url": "/_next/static/chunks/head-BVMNsQxM.js",
+              "raw": 3202,
+              "gzip": 1502
+            }
+          ]
+        },
+        "resourceTiming": {
+          "resources": [
+            {
+              "name": "http://127.0.0.1:4212/_next/static/chunks/index-Bcv99n_T.js",
+              "transferSize": 59199,
+              "encodedBodySize": 58899,
+              "decodedBodySize": 58899
+            },
+            {
+              "name": "http://127.0.0.1:4212/_next/static/chunks/rolldown-runtime-QTnfLwEv.js",
+              "transferSize": 994,
+              "encodedBodySize": 694,
+              "decodedBodySize": 694
+            },
+            {
+              "name": "http://127.0.0.1:4212/_next/static/chunks/framework-ttvUFOyE.js",
+              "transferSize": 190029,
+              "encodedBodySize": 189729,
+              "decodedBodySize": 189729
+            },
+            {
+              "name": "http://127.0.0.1:4212/_next/static/chunks/pages-CkaUEXrc.js",
+              "transferSize": 979,
+              "encodedBodySize": 679,
+              "decodedBodySize": 679
+            },
+            {
+              "name": "http://127.0.0.1:4212/_next/static/chunks/head-BVMNsQxM.js",
+              "transferSize": 3502,
+              "encodedBodySize": 3202,
+              "decodedBodySize": 3202
+            }
+          ],
+          "navigation": {
+            "transferSize": 1166,
+            "encodedBodySize": 866,
+            "decodedBodySize": 2272
+          }
+        },
+        "html": {
+          "raw": 2272,
+          "gzip": 775
+        }
+      },
+      "requests": {
+        "requestsPerSecond": 3186.9,
+        "meanLatency": 5,
+        "p50Latency": 4.1,
+        "p95Latency": 8.7,
+        "p99Latency": 9.7,
+        "rounds": [
+          {
+            "requestsPerSecond": 1720.896414942547,
+            "meanLatency": 9.280254285999945,
+            "p50Latency": 7.819667000003392,
+            "p95Latency": 20.72733299999527,
+            "p99Latency": 28.911332999996375
+          },
+          {
+            "requestsPerSecond": 3181.030461799016,
+            "meanLatency": 5.014939600999991,
+            "p50Latency": 4.107499999998254,
+            "p95Latency": 8.696708000003127,
+            "p99Latency": 9.606500000001688
+          },
+          {
+            "requestsPerSecond": 3406.81309063019,
+            "meanLatency": 4.689669985000088,
+            "p50Latency": 3.855834000001778,
+            "p95Latency": 8.45908299999428,
+            "p99Latency": 9.73554200000217
+          },
+          {
+            "requestsPerSecond": 3738.378898720261,
+            "meanLatency": 4.274439656999937,
+            "p50Latency": 3.9194579999966663,
+            "p95Latency": 6.606958999997005,
+            "p99Latency": 15.192791000001307
+          },
+          {
+            "requestsPerSecond": 3186.851052557146,
+            "meanLatency": 5.0049271869998115,
+            "p50Latency": 4.072041999999783,
+            "p95Latency": 8.981291999996756,
+            "p99Latency": 9.579124999996566
+          }
+        ]
+      }
+    },
+    "nextane": {
+      "build": {
+        "runs": [
+          1220.1,
+          1249.4,
+          1202.9,
+          1195.3,
+          1245.1,
+          1144.8,
+          1238.9
+        ],
+        "mean": 1213.8,
+        "median": 1220.1,
+        "min": 1144.8,
+        "max": 1249.4,
+        "stddev": 36.8
+      },
+      "artifacts": {
+        "client": {
+          "raw": 127365,
+          "gzip": 41775,
+          "files": 3,
+          "fileNames": [
+            "assets/index-Ctb4x9tA.js",
+            "assets/pages-BkpsIQ6H.js",
+            "assets/runtime-DEv-0lHW.js"
+          ]
+        },
+        "server": {
+          "raw": 125613,
+          "gzip": 32090,
+          "files": 3,
+          "fileNames": [
+            "assets/pages-DaBLCYqt.js",
+            "assets/runtime.server-BxAZsybV.js",
+            "index.js"
+          ]
+        }
+      },
+      "browser": {
+        "title": "Pages rendering benchmark",
+        "normalizedText": "Pages rendering benchmark\n\nServer-rendered at <timestamp>\n\nCount: 0\nRendered row 1\nRendered row 2\nRendered row 3\nRendered row 4\nRendered row 5\nRendered row 6\nRendered row 7\nRendered row 8\nRendered row 9\nRendered row 10\nRendered row 11\nRendered row 12\nRendered row 13\nRendered row 14\nRendered row 15\nRendered row 16\nRendered row 17\nRendered row 18\nRendered row 19\nRendered row 20",
+        "hydration": "Count: 0 → Count: 1",
+        "requestedJs": {
+          "files": 3,
+          "raw": 127365,
+          "gzip": 41775,
+          "urls": [
+            {
+              "url": "/assets/index-Ctb4x9tA.js",
+              "raw": 10425,
+              "gzip": 4113
+            },
+            {
+              "url": "/assets/runtime-DEv-0lHW.js",
+              "raw": 116212,
+              "gzip": 37209
+            },
+            {
+              "url": "/assets/pages-BkpsIQ6H.js",
+              "raw": 728,
+              "gzip": 453
+            }
+          ]
+        },
+        "resourceTiming": {
+          "resources": [
+            {
+              "name": "http://127.0.0.1:4213/assets/index-Ctb4x9tA.js",
+              "transferSize": 4400,
+              "encodedBodySize": 4100,
+              "decodedBodySize": 10425
+            },
+            {
+              "name": "http://127.0.0.1:4213/assets/runtime-DEv-0lHW.js",
+              "transferSize": 37463,
+              "encodedBodySize": 37163,
+              "decodedBodySize": 116212
+            },
+            {
+              "name": "http://127.0.0.1:4213/assets/pages-BkpsIQ6H.js",
+              "transferSize": 751,
+              "encodedBodySize": 451,
+              "decodedBodySize": 728
+            }
+          ],
+          "navigation": {
+            "transferSize": 983,
+            "encodedBodySize": 683,
+            "decodedBodySize": 1815
+          }
+        },
+        "html": {
+          "raw": 1815,
+          "gzip": 684
+        }
+      },
+      "requests": {
+        "requestsPerSecond": 1744.6,
+        "meanLatency": 9.1,
+        "p50Latency": 7,
+        "p95Latency": 18.7,
+        "p99Latency": 38.9,
+        "rounds": [
+          {
+            "requestsPerSecond": 1435.7030269824184,
+            "meanLatency": 11.114208703000033,
+            "p50Latency": 8.193874999997206,
+            "p95Latency": 23.444584000004397,
+            "p99Latency": 68.1909169999999
+          },
+          {
+            "requestsPerSecond": 2063.5148125964743,
+            "meanLatency": 7.711600460999937,
+            "p50Latency": 6.597625000002154,
+            "p95Latency": 15.323874999994587,
+            "p99Latency": 22.254124999999476
+          },
+          {
+            "requestsPerSecond": 2099.9194155924033,
+            "meanLatency": 7.590759625000028,
+            "p50Latency": 6.500374999995984,
+            "p95Latency": 16.035416999999143,
+            "p99Latency": 22.22479200000089
+          },
+          {
+            "requestsPerSecond": 1657.7971067710305,
+            "meanLatency": 9.61316549199989,
+            "p50Latency": 7.6162919999987935,
+            "p95Latency": 18.671166000000085,
+            "p99Latency": 49.95487499999581
+          },
+          {
+            "requestsPerSecond": 1744.6346296048448,
+            "meanLatency": 9.139955725000043,
+            "p50Latency": 6.987958999998227,
+            "p95Latency": 21.129208000005747,
+            "p99Latency": 38.856041999999434
+          }
+        ]
+      }
+    }
+  }
+}

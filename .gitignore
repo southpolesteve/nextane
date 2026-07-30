@@ -1,0 +1,9 @@
+node_modules/
+dist/
+package-dist/
+.next/
+.wrangler/
+.DS_Store
+playwright-report/
+test-results/
+coverage/

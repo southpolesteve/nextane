@@ -1,0 +1,56 @@
+declare module "*.tsrx" {
+  import type { ComponentBody } from "octane";
+
+  const Component: ComponentBody<Record<string, unknown>>;
+  export const DefaultNotFound: ComponentBody<Record<string, unknown>>;
+  export const DefaultServerError: ComponentBody<Record<string, unknown>>;
+  export default Component;
+}
+
+declare module "virtual:nextane-client-manifest" {
+  import type { ClientRoute } from "./routing/types";
+
+  export const routes: ClientRoute[];
+  export const pageLoaders: Record<string, () => Promise<Record<string, unknown>>>;
+  export const appLoader: null | (() => Promise<Record<string, unknown>>);
+  export const errorLoader: null | (() => Promise<Record<string, unknown>>);
+}
+
+declare module "virtual:nextane-server-manifest" {
+  export interface ServerRoute {
+    route: string;
+    regexSource: string;
+    params: Array<{
+      name: string;
+      kind: "single" | "catchAll" | "optionalCatchAll";
+    }>;
+    id: number;
+    kind: "page" | "api";
+    load(): Promise<Record<string, unknown>>;
+  }
+
+  export const buildId: string;
+  export const routes: ServerRoute[];
+  export const loadApp: null | (() => Promise<Record<string, unknown>>);
+  export const loadDocument: null | (() => Promise<Record<string, unknown>>);
+  export const loadError: null | (() => Promise<Record<string, unknown>>);
+  export const config: {
+    rewrites: Array<{ source: string; destination: string }>;
+    crossOrigin?: string;
+  };
+}
+
+interface Window {
+  __NEXT_DATA__?: import("./types").NextaneData;
+  __NEXT_HYDRATED?: boolean;
+  __NEXT_HYDRATED_CB?: () => void;
+  next: {
+    router: import("./types").NextaneRouter;
+  };
+}
+
+declare namespace Cloudflare {
+  interface GlobalProps {
+    mainModule: typeof import("../worker");
+  }
+}
