@@ -41,13 +41,13 @@ larger Next.js Pages Router compatibility claim.
 
 The prototype-owned suite currently has:
 
-- **21/21 unit tests** covering route discovery/matching, classic and Edge API
-  request/response adaptation, URL normalization, and the expanded Pages
-  server contract;
-- **5/5 browser flows locally** covering SSR, hydration, state, duplicate-free
+- **56/56 unit and security tests** covering route discovery/matching, classic
+  and Edge API request/response adaptation, URL normalization, cache isolation,
+  and the expanded Pages server contract;
+- **6/6 browser flows locally** covering SSR, hydration, state, duplicate-free
   links, soft navigation, browser back, dynamic params, API routes, custom
-  404s, and shared ISR artifacts; and
-- **5/5 of those browser flows against the deployed Worker**.
+  404s, shared ISR artifacts, and public security boundaries; and
+- **6/6 of those browser flows against the deployed Worker**.
 
 These are prototype-owned tests, not upstream Next.js tests.
 

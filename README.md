@@ -17,11 +17,11 @@ The Next.js Pages Router, rebuilt on [Octane](https://octanejs.dev/).
 > idea, talk to an agent for a few hours, and end up with something real enough
 > to test.
 >
-> If you need a Next.js alternative, use
+> If you need a Next.js alternative, start with
 > [Vinext](https://vinext.dev/). It passes
 > [more than 97% of the supported Next.js deploy test suite](https://vinext.dev/compatibility),
-> runs real applications in production, and is much more mature. Nextane is
-> newer, narrower, and built on alpha software.
+> supports substantial Next.js applications today, and is much more mature.
+> Nextane is newer, narrower, and built on alpha software.
 
 [Vinext](https://github.com/cloudflare/vinext) reimplements the Next.js API on
 Vite. It began as a slop fork of Next.js. Nextane is me doing it again, this
@@ -40,9 +40,9 @@ builds ship:
 | --- | ---: | ---: |
 | Next.js 16.2.12 | 109.9 KiB | — |
 | Vinext 1.0.0-beta.4 | 77.8 KiB | 29.2% less |
-| Nextane + Octane 0.1.19 | **40.8 KiB** | **62.9% less** |
+| Nextane + Octane 0.1.19 | **41.0 KiB** | **62.7% less** |
 
-Nextane ships 47.6% less client JavaScript than Vinext in this fixture. Its
+Nextane ships 47.3% less client JavaScript than Vinext in this fixture. Its
 production build is slower than Vinext's, and its measured SSR throughput
 trails both Vinext and Next.js. See the
 [full methodology and results](./docs/benchmark.md).
@@ -51,8 +51,8 @@ trails both Vinext and Next.js. See the
 
 Probably not.
 
-Use Vinext if you need a production-ready alternative to Next.js. Try Nextane
-if:
+Start with Vinext if you need a more mature alternative to Next.js. Try
+Nextane if:
 
 - you have an existing Pages Router application;
 - you want to see how far Octane can replace React while keeping the same APIs;
@@ -123,8 +123,8 @@ Then open `http://127.0.0.1:5173`.
 npm run check
 ```
 
-The check runs typechecking, 21 low-level routing/API contract tests, five
-real-browser Pages Router flows, and a production build.
+The check runs typechecking, 56 unit and security tests, release-workflow
+checks, six real-browser Pages Router flows, and a production build.
 
 See [architecture](./docs/architecture.md) for implementation details. Nextane
 is not affiliated with Vercel, Next.js, Vinext, Cloudflare, or Octane.

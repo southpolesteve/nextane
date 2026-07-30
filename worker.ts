@@ -27,39 +27,35 @@ const manifest = {
   config,
 };
 const handleIsrArtifact = createIsrArtifactHandler(manifest);
-const localArtifactCache = new Map<
-  string,
-  { body: string; headers: [string, string][]; expiresAt: number }
->();
-
-function maxAge(cacheControl: string | null): number {
-  const match = /(?:^|,)\s*max-age=(\d+)/i.exec(cacheControl ?? "");
-  return match ? Number(match[1]) : 0;
-}
+const runtimeCaches = caches as CacheStorage & { default: Cache };
 
 async function loadLocalArtifact(request: Request): Promise<Response> {
-  const key = `${buildId}:${new URL(request.url).pathname}`;
-  const cached = localArtifactCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
+  const cacheRequest = namespaceIsrCacheRequest(request, buildId);
+  const cached = await runtimeCaches.default.match(cacheRequest);
+  if (cached) {
     const headers = new Headers(cached.headers);
     headers.set("x-cache-status", "HIT");
-    return new Response(cached.body, { headers });
+    return new Response(cached.body, {
+      status: cached.status,
+      statusText: cached.statusText,
+      headers,
+    });
   }
   if (request.headers.get("x-nextane-only-cached") === "1") {
     return new Response("ISR artifact not cached", { status: 404 });
   }
 
   const response = await handleIsrArtifact(request);
-  const body = await response.text();
-  const headers = [...response.headers.entries()];
-  localArtifactCache.set(key, {
-    body,
-    headers,
-    expiresAt: Date.now() + maxAge(response.headers.get("cache-control")) * 1000,
-  });
-  const missHeaders = new Headers(headers);
+  if (response.ok) {
+    await runtimeCaches.default.put(cacheRequest, response.clone());
+  }
+  const missHeaders = new Headers(response.headers);
   missHeaders.set("x-cache-status", "MISS");
-  return new Response(body, { status: response.status, headers: missHeaders });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: missHeaders,
+  });
 }
 
 export class IsrArtifact extends WorkerEntrypoint<NextaneEnvironment> {
@@ -78,8 +74,14 @@ export default {
         );
       },
       async revalidatePath(pathname) {
-        localArtifactCache.delete(`${buildId}:${pathname}`);
-        if (import.meta.env.DEV) return true;
+        if (import.meta.env.DEV) {
+          const canonical = new Request(
+            new URL(pathname, "https://nextane.internal"),
+          );
+          return runtimeCaches.default.delete(
+            namespaceIsrCacheRequest(canonical, buildId),
+          );
+        }
         if (!ctx.cache) return false;
         const result = await ctx.cache.purge({
           tags: [cacheTagForPath(pathname)],

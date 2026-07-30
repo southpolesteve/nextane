@@ -77,8 +77,34 @@ Production verification on July 29, 2026 observed `MISS`, then `UPDATING`
 during stale-while-revalidate, then `HIT`. The final HTML and page-data
 responses carried the identical generation timestamp.
 
-Local workerd does not yet emulate this new cache layer, so development uses a
-small in-memory substitute with the same artifact boundary.
+Local workerd does not yet emulate this new front-of-Worker cache layer, so
+development uses the standard Workers Cache API with the same artifact
+boundary. Nextane does not keep rendered application responses in a
+process-global `Map`.
+
+## Cross-request isolation
+
+GSSP, API, page `getInitialProps`, and request-dependent `_app` or `_document`
+responses are rendered per request and are private/no-store by default. Router
+state is carried through `AsyncLocalStorage`, including across suspended Octane
+render passes.
+
+Only `getStaticProps` artifacts are eligible for sharing. Before generating
+one, Nextane replaces the incoming request with a synthetic canonical request:
+the origin is fixed, the URL contains only the matched pathname, and all
+incoming headers and query parameters are removed. Routes using
+`_app.getInitialProps` or `_document.getInitialProps` bypass the shared cache
+entirely.
+
+Every artifact read from the cache is checked against the current build ID,
+route, pathname, and dynamic params. Nextane also rejects cached artifacts that
+contain App props, response headers or cookies, fallback state, request
+response bodies, or non-static markers. A collision or malformed cache entry
+therefore fails closed instead of being rendered to another request.
+
+Application modules still run in a long-lived Worker isolate. As with any
+server framework, application code must not put request-specific values in
+module-level variables or its own shared caches.
 
 ## Intentional boundaries
 

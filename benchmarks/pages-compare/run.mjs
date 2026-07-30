@@ -409,6 +409,21 @@ function gitHash(repository) {
   return result.status === 0 ? result.stdout.trim() : "uncommitted";
 }
 
+function gitRevision(repository) {
+  const revision = gitHash(repository);
+  const status = spawnSync(
+    "git",
+    ["status", "--porcelain", "--untracked-files=no"],
+    {
+      cwd: repository,
+      encoding: "utf8",
+    },
+  );
+  return status.status === 0 && status.stdout.trim()
+    ? `${revision}+dirty`
+    : revision;
+}
+
 function formatBytes(bytes) {
   return `${(bytes / 1024).toFixed(1)} KiB`;
 }
@@ -455,7 +470,7 @@ function markdown(results) {
     `- React ${results.versions.react}`,
     `- Vinext ${results.versions.vinext} (${results.versions.vinextCommit})`,
     `- Octane ${results.versions.octane}`,
-    `- Nextane ${results.versions.nextaneCommit}`,
+    `- Nextane source ${results.versions.nextaneCommit}`,
     "",
   );
   return lines.join("\n");
@@ -561,7 +576,7 @@ async function main() {
         vinext: readVersion(vinextPackagePath),
         vinextCommit: vinextRepository ? gitHash(vinextRepository) : "npm package",
         octane: readVersion(path.join(projectRoot, "node_modules/octane/package.json")),
-        nextaneCommit: readVersion(path.join(projectRoot, "package.json")),
+        nextaneCommit: gitRevision(projectRoot),
       },
       projects: Object.fromEntries(
         Object.keys(projects).map((key) => [
@@ -585,7 +600,7 @@ async function main() {
       path.join(resultsDirectory, "latest.json"),
       `${JSON.stringify(results, null, 2)}\n`,
     );
-    writeFileSync(path.join(resultsDirectory, "latest.md"), `${markdown(results)}\n`);
+    writeFileSync(path.join(resultsDirectory, "latest.md"), markdown(results));
     console.log(`Wrote ${path.join(resultsDirectory, "latest.md")}`);
   } finally {
     for (const server of Object.values(servers)) stopServer(server);

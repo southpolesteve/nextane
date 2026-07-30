@@ -200,6 +200,86 @@ test("security boundaries hold through the public runtime", async ({
   const victim = await request.get("/?cacheProbe=victim");
   expect(await victim.text()).not.toContain(attackerCanary);
 
+  const isolationTokens = Array.from(
+    { length: 16 },
+    (_, index) => `e2e-${String(index).padStart(2, "0")}-${Date.now()}`,
+  );
+  const gsspResponses = await Promise.all(
+    isolationTokens.flatMap((token, index) => [
+      request.get(`/ssr?isolation=${encodeURIComponent(token)}`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          cookie: `session=${token}`,
+        },
+      }),
+      request.get(
+        `/_next/data/${encodeURIComponent(buildId)}/ssr.json?isolation=${encodeURIComponent(token)}`,
+        {
+          headers: {
+            authorization: `Bearer ${token}`,
+            cookie: `session=${token}`,
+            "x-isolation-index": String(index),
+          },
+        },
+      ),
+    ]),
+  );
+  const gsspBodies = await Promise.all(
+    gsspResponses.map((response) => response.text()),
+  );
+  for (let index = 0; index < gsspResponses.length; index += 1) {
+    const token = isolationTokens[Math.floor(index / 2)];
+    expect(gsspResponses[index].status()).toBe(200);
+    expect(gsspResponses[index].headers()["cache-control"]).toBe(
+      "private, no-cache, no-store, max-age=0, must-revalidate",
+    );
+    expect(gsspBodies[index]).toContain(token);
+    for (const other of isolationTokens) {
+      if (other !== token) expect(gsspBodies[index]).not.toContain(other);
+    }
+  }
+
+  const apiResponses = await Promise.all(
+    isolationTokens.map((token) =>
+      request.get(`/api/hello?name=${encodeURIComponent(token)}`),
+    ),
+  );
+  for (let index = 0; index < apiResponses.length; index += 1) {
+    expect(apiResponses[index].status()).toBe(200);
+    expect(apiResponses[index].headers()["cache-control"]).toBe(
+      "private, no-store",
+    );
+    const payload = (await apiResponses[index].json()) as {
+      query: { name: string };
+    };
+    expect(payload.query.name).toBe(isolationTokens[index]);
+  }
+
+  const staticResponses = await Promise.all(
+    isolationTokens.map((token) =>
+      request.get(`/?cacheProbe=${encodeURIComponent(token)}`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          cookie: `session=${token}`,
+          "accept-language": token,
+          "user-agent": token,
+        },
+      }),
+    ),
+  );
+  const staticBodies = await Promise.all(
+    staticResponses.map((response) => response.text()),
+  );
+  for (let index = 0; index < staticResponses.length; index += 1) {
+    expect(staticResponses[index].status()).toBe(200);
+    expect(staticResponses[index].headers()["cache-control"]).toBe(
+      "public, max-age=0, must-revalidate",
+    );
+    for (const token of isolationTokens) {
+      expect(staticBodies[index]).not.toContain(token);
+    }
+  }
+
   if (process.env.NEXTANE_BASE_URL) {
     const scriptSources = [
       ...homeHtml.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/g),

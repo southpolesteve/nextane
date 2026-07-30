@@ -38,12 +38,88 @@ describe("Pages Router API routes", () => {
 
     expect(response.status).toBe(201);
     expect(response.headers.get("x-api-shape")).toBe("next");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual({
       method: "POST",
       query: { name: "Steve" },
       cookies: { session: "octane powered" },
       body: { hello: "world" },
     });
+  });
+
+  it("isolates overlapping API request bodies, cookies, headers, query, and response state", async () => {
+    const requestCount = 24;
+    let entered = 0;
+    let releaseAll!: () => void;
+    const allEntered = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const route = {
+      async default(
+        request: {
+          body: { token: string };
+          cookies: Record<string, string>;
+          headers: { get(name: string): string | null };
+          query: Record<string, unknown>;
+        },
+        reply: {
+          setHeader(name: string, value: string): void;
+          json(value: unknown): void;
+        },
+      ) {
+        const token = request.body.token;
+        entered += 1;
+        if (entered === requestCount) releaseAll();
+        await allEntered;
+        reply.setHeader("x-request-canary", token);
+        reply.setHeader(
+          "set-cookie",
+          `api-canary=${token}; Path=/; HttpOnly`,
+        );
+        reply.json({
+          token,
+          cookie: request.cookies.session,
+          authorization: request.headers.get("authorization"),
+          query: request.query.token,
+        });
+      },
+    };
+    const tokens = Array.from(
+      { length: requestCount },
+      (_, index) => `api-${String(index).padStart(2, "0")}-canary`,
+    );
+    const responses = await Promise.all(
+      tokens.map((token) =>
+        runApiRoute(
+          route,
+          new Request(`https://nextane.test/api/isolation?token=${token}`, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${token}`,
+              cookie: `session=${token}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ token }),
+          }),
+          { token },
+        ),
+      ),
+    );
+    const bodies = await Promise.all(responses.map((response) => response.text()));
+
+    for (let index = 0; index < requestCount; index += 1) {
+      const token = tokens[index];
+      expect(responses[index].headers.get("cache-control")).toBe(
+        "private, no-store",
+      );
+      expect(responses[index].headers.get("x-request-canary")).toBe(token);
+      expect(responses[index].headers.get("set-cookie")).toContain(token);
+      expect(bodies[index]).toContain(token);
+      expect(bodies[index]).toContain(`Bearer ${token}`);
+      for (const other of tokens) {
+        if (other !== token) expect(bodies[index]).not.toContain(other);
+      }
+    }
   });
 
   it("parses JSON, form, and text bodies with Pages-style semantics", async () => {
@@ -242,6 +318,7 @@ describe("Pages Router API routes", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("/destination");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
   });
 
   it("keeps req.query writable and exposes a relative req.url", async () => {
@@ -290,9 +367,31 @@ describe("Pages Router API routes", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual({
       query: { hello: "octane", id: "dynamic" },
       body: "edge body",
     });
+  });
+
+  it("preserves an explicit API cache policy", async () => {
+    const response = await runApiRoute(
+      {
+        default(
+          _request: unknown,
+          reply: {
+            setHeader(name: string, value: string): void;
+            json(value: unknown): void;
+          },
+        ) {
+          reply.setHeader("cache-control", "public, max-age=60");
+          reply.json({ public: true });
+        },
+      },
+      new Request("https://nextane.test/api/public"),
+      {},
+    );
+
+    expect(response.headers.get("cache-control")).toBe("public, max-age=60");
   });
 });
