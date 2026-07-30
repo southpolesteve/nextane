@@ -118,3 +118,95 @@ test("ISR HTML and page-data requests share one rendered artifact", async ({ req
     pageProps: { revalidate: 10 },
   });
 });
+
+test("security boundaries hold through the public runtime", async ({
+  page,
+  request,
+}) => {
+  const navigation = await page.goto("/");
+  expect(navigation?.status()).toBe(200);
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-nextane-hydrated",
+    "true",
+  );
+
+  const unsafeNavigation = await page.evaluate(async () => {
+    const runtimeWindow = window as Window & {
+      __nextaneXssProbe?: number;
+      next: {
+        router: {
+          push: (url: string) => Promise<boolean>;
+        };
+      };
+    };
+    runtimeWindow.__nextaneXssProbe = 0;
+    const result = await runtimeWindow.next.router.push(
+      "java\nscript:globalThis.__nextaneXssProbe=1",
+    );
+    return {
+      href: window.location.href,
+      probe: runtimeWindow.__nextaneXssProbe,
+      result,
+    };
+  });
+  expect(unsafeNavigation).toEqual({
+    href: `${new URL("/", page.url())}`,
+    probe: 0,
+    result: false,
+  });
+
+  const home = await request.get("/");
+  const homeHtml = await home.text();
+  const buildId = buildIdFromHtml(homeHtml);
+  expect(home.headers()["x-content-type-options"]).toBe("nosniff");
+  expect(home.headers()["referrer-policy"]).toBe(
+    "strict-origin-when-cross-origin",
+  );
+
+  const dataPath = `/_next/data/${encodeURIComponent(buildId)}/index.json`;
+  expect((await request.fetch(dataPath, { method: "HEAD" })).status()).toBe(200);
+  for (const method of ["POST", "PUT", "DELETE"]) {
+    const response = await request.fetch(dataPath, { method });
+    expect(response.status()).toBe(405);
+    expect(response.headers().allow).toBe("GET, HEAD");
+  }
+  expect(
+    (
+      await request.get(
+        `/_next/data/${encodeURIComponent(`${buildId}-wrong`)}/index.json`,
+      )
+    ).status(),
+  ).toBe(404);
+
+  const malformedCookie = await request.get("/ssr?cookie=malformed", {
+    headers: { cookie: "broken=%E0%A4%A" },
+  });
+  expect(malformedCookie.status()).toBe(200);
+
+  const hostileReplacement = "$&$`$'";
+  const hostileResponse = await request.get(
+    `/posts/${encodeURIComponent(hostileReplacement)}`,
+  );
+  expect(hostileResponse.status()).toBe(200);
+  expect((await hostileResponse.body()).byteLength).toBeLessThan(100_000);
+
+  const attackerCanary = `attacker-${Date.now()}`;
+  await request.get(`/?cacheProbe=${attackerCanary}`, {
+    headers: {
+      authorization: `Bearer ${attackerCanary}`,
+      cookie: `session=${attackerCanary}`,
+    },
+  });
+  const victim = await request.get("/?cacheProbe=victim");
+  expect(await victim.text()).not.toContain(attackerCanary);
+
+  if (process.env.NEXTANE_BASE_URL) {
+    const scriptSources = [
+      ...homeHtml.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/g),
+    ].map((match) => match[1]);
+    expect(scriptSources.length).toBeGreaterThan(0);
+    for (const source of scriptSources) {
+      expect((await request.get(`${source}.map`)).status()).toBe(404);
+    }
+  }
+});
