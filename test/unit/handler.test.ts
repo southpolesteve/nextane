@@ -62,9 +62,10 @@ const assets = {
         <meta charset="utf-8">
         <!--nextane-head--><!--nextane-styles-->
         <link rel="preload" href="/client.js">
+        <SCRIPT>globalThis.__templateInline = true</SCRIPT >
       </head><body>
         <div id="__next"></div><!--nextane-data-->
-        <script type="module" src="/client.js"></script>
+        <SCRIPT data-note=">" type="module" src="/client.js"></SCRIPT >
       </body></html>`);
   },
 };
@@ -95,6 +96,7 @@ describe("Pages Router server compatibility", () => {
     expect(html).toContain('script id="__NEXT_DATA__"');
     expect(html).toMatch(/script[^>]+nonce="test-nonce"/);
     expect(html).toMatch(/link[^>]+nonce="test-nonce"/);
+    expect(html).not.toContain("__templateInline");
   });
 
   it("keeps the original data URL on req while exposing the resolved page URL", async () => {

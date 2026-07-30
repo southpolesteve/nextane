@@ -438,7 +438,112 @@ function escapeHtml(value: string): string {
 }
 
 function replaceLiteral(source: string, search: string, replacement: string): string {
-  return source.replace(search, () => replacement);
+  const index = source.indexOf(search);
+  if (index === -1) return source;
+  return `${source.slice(0, index)}${replacement}${source.slice(
+    index + search.length,
+  )}`;
+}
+
+interface HtmlElementRange {
+  end: number;
+  innerEnd: number;
+  innerStart: number;
+  outer: string;
+  start: number;
+}
+
+function htmlTagEnd(source: string, start: number): number {
+  let quote = "";
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote) {
+      if (character === quote) quote = "";
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isHtmlTagBoundary(character: string | undefined): boolean {
+  return (
+    character === undefined ||
+    character === ">" ||
+    character === "/" ||
+    character === " " ||
+    character === "\n" ||
+    character === "\r" ||
+    character === "\t" ||
+    character === "\f"
+  );
+}
+
+function findHtmlElements(source: string, tagName: string): HtmlElementRange[] {
+  const lowerSource = source.toLowerCase();
+  const opening = `<${tagName.toLowerCase()}`;
+  const closing = `</${tagName.toLowerCase()}`;
+  const elements: HtmlElementRange[] = [];
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const start = lowerSource.indexOf(opening, cursor);
+    if (start === -1) break;
+    if (!isHtmlTagBoundary(lowerSource[start + opening.length])) {
+      cursor = start + opening.length;
+      continue;
+    }
+
+    const openingEnd = htmlTagEnd(source, start + opening.length);
+    if (openingEnd === -1) break;
+
+    let closingStart = lowerSource.indexOf(closing, openingEnd + 1);
+    while (
+      closingStart !== -1 &&
+      !isHtmlTagBoundary(lowerSource[closingStart + closing.length])
+    ) {
+      closingStart = lowerSource.indexOf(
+        closing,
+        closingStart + closing.length,
+      );
+    }
+    if (closingStart === -1) break;
+
+    const closingEnd = htmlTagEnd(source, closingStart + closing.length);
+    if (closingEnd === -1) break;
+
+    elements.push({
+      start,
+      end: closingEnd + 1,
+      innerStart: openingEnd + 1,
+      innerEnd: closingStart,
+      outer: source.slice(start, closingEnd + 1),
+    });
+    cursor = closingEnd + 1;
+  }
+
+  return elements;
+}
+
+function htmlElementContent(source: string, tagName: string): string {
+  const element = findHtmlElements(source, tagName)[0];
+  return element
+    ? source.slice(element.innerStart, element.innerEnd)
+    : "";
+}
+
+function stripHtmlElements(source: string, tagName: string): string {
+  const elements = findHtmlElements(source, tagName);
+  if (elements.length === 0) return source;
+  let result = "";
+  let cursor = 0;
+  for (const element of elements) {
+    result += source.slice(cursor, element.start);
+    cursor = element.end;
+  }
+  return `${result}${source.slice(cursor)}`;
 }
 
 function hasSetCookie(response: ResponseSnapshot | undefined): boolean {
@@ -516,20 +621,22 @@ function renderDocumentShell(
   artifact: RenderArtifact,
   dataScript: string,
 ): string {
-  const templateHead =
-    /<head[^>]*>([\s\S]*?)<\/head>/i.exec(template)?.[1] ?? "";
-  const hydratedHead = replaceLiteral(
+  const templateHead = htmlElementContent(template, "head");
+  const hydratedHead = stripHtmlElements(
     replaceLiteral(
-      templateHead,
-      "<!--nextane-head-->",
-      stampManagedHead(artifact.head ?? ""),
+      replaceLiteral(
+        templateHead,
+        "<!--nextane-head-->",
+        stampManagedHead(artifact.head ?? ""),
+      ),
+      "<!--nextane-styles-->",
+      artifact.css ?? "",
     ),
-    "<!--nextane-styles-->",
-    artifact.css ?? "",
-  ).replace(/<script\b[\s\S]*?<\/script>/gi, () => "");
-  const templateScripts = [...template.matchAll(/<script\b[\s\S]*?<\/script>/gi)]
-    .map((match) => match[0])
-    .filter((script) => /\bsrc=/.test(script))
+    "script",
+  );
+  const templateScripts = findHtmlElements(template, "script")
+    .map((element) => element.outer)
+    .filter((script) => attributeValue(script, "src") !== undefined)
     .join("");
 
   let html = shell;
