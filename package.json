@@ -100,7 +100,7 @@
     "@cloudflare/workers-types": "5.20260729.1",
     "@playwright/test": "^1.61.1",
     "@types/node": "^24.0.0",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.0.18",
     "wrangler": "4.115.0"
