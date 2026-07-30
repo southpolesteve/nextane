@@ -2,17 +2,21 @@
   "name": "nextane-pages-compare",
   "private": true,
   "type": "module",
+  "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": ">=26.5.1"
+  },
   "scripts": {
     "benchmark": "node run.mjs"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "6.0.0",
+    "@vitejs/plugin-react": "6.0.5",
     "next": "16.2.12",
     "nextane": "file:../..",
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "vinext": "1.0.0-beta.4",
-    "vite": "8.1.5"
+    "vite": "8.2.0"
   },
   "overrides": {
     "postcss": "8.5.25",

@@ -24,7 +24,9 @@ First, inventory the application:
   replacements; list substantial libraries as blockers.
 
 Then migrate it:
-1. Add nextane, octane, @octanejs/vite-plugin,
+1. Use the Node and npm versions pinned by Nextane's package.json and
+   .node-version; do not preserve support for an older toolchain. Add nextane,
+   octane, @octanejs/vite-plugin,
    @cloudflare/vite-plugin, vite, wrangler, and
    TypeScript as appropriate.
 2. Replace Next.js scripts with Vite/Nextane dev and build scripts plus a
