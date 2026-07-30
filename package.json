@@ -93,7 +93,7 @@
   },
   "dependencies": {
     "@octanejs/vite-plugin": "0.1.19",
-    "octane": "0.1.19"
+    "octane": "0.1.21"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.48.0",
