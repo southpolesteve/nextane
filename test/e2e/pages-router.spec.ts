@@ -1,7 +1,5 @@
 import { expect, test } from "@playwright/test";
 
-const waitsForDevelopmentTransforms = !process.env.NEXTANE_BASE_URL;
-
 function buildIdFromHtml(html: string): string {
   const source =
     /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/.exec(
@@ -18,9 +16,10 @@ test("static props render, Octane hydrates, and Head owns the title", async ({ p
   expect(response?.headers()["x-powered-by"]).toBe("Nextane");
   await expect(page).toHaveTitle("Nextane — Pages Router on Octane");
   await expect(page.getByRole("heading", { name: "Same pages. Different engine." })).toBeVisible();
-  if (waitsForDevelopmentTransforms) {
-    await expect(page.locator("html")).toHaveAttribute("data-nextane-hydrated", "true");
-  }
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-nextane-hydrated",
+    "true",
+  );
   await expect(page.getByRole("button", { name: "Octane state: 0" })).toBeVisible();
   expect(await page.locator("main.page").count()).toBe(1);
   await page.getByRole("button", { name: "Octane state: 0" }).click();
@@ -32,9 +31,10 @@ test("static props render, Octane hydrates, and Head owns the title", async ({ p
 
 test("Link performs a Pages-style soft navigation and browser back works", async ({ page }) => {
   await page.goto("/");
-  if (waitsForDevelopmentTransforms) {
-    await expect(page.locator("html")).toHaveAttribute("data-nextane-hydrated", "true");
-  }
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-nextane-hydrated",
+    "true",
+  );
   await page.getByRole("button", { name: "Octane state: 0" }).click();
   await expect(page.getByRole("button", { name: "Octane state: 1" })).toBeVisible();
   await page.evaluate(() => {
