@@ -124,21 +124,67 @@ describe("client build security", () => {
       );
     }
 
-    for (const configName of ["headers", "redirects", "i18n"]) {
+    for (const configName of ["i18n"]) {
       const configRoot = await mkdtemp(
         path.join(os.tmpdir(), "nextane-config-"),
       );
-      const value =
-        configName === "i18n"
-          ? `{ locales: ["en"], defaultLocale: "en" }`
-          : "async () => []";
       await writeFile(
         path.join(configRoot, "next.config.ts"),
-        `export default { ${configName}: ${value} };`,
+        `export default { ${configName}: { locales: ["en"], defaultLocale: "en" } };`,
       );
       await expect(loadRoutingConfig(configRoot)).rejects.toThrow(
         new RegExp(`security policy: ${configName}`),
       );
     }
+  });
+
+  it("parses redirects, headers, and conditional rewrites from next.config", async () => {
+    const configRoot = await mkdtemp(path.join(os.tmpdir(), "nextane-config-"));
+    await writeFile(
+      path.join(configRoot, "next.config.js"),
+      `module.exports = {
+        async rewrites() {
+          return {
+            beforeFiles: [
+              {
+                source: "/:path(.*)",
+                has: [{ type: "query", key: "json", value: "true" }],
+                destination: "/api/json?from=/:path",
+              },
+            ],
+          };
+        },
+        async redirects() {
+          return [
+            { source: "/redirect-1", destination: "/somewhere-else", permanent: false },
+            { source: "/redirect-no-basepath", destination: "/another", permanent: false, basePath: false },
+          ];
+        },
+        async headers() {
+          return [
+            { source: "/add-header", headers: [{ key: "x-hello", value: "world" }] },
+          ];
+        },
+      };`,
+    );
+    const config = await loadRoutingConfig(configRoot);
+    expect(config.rewrites).toEqual([
+      {
+        source: "/:path(.*)",
+        destination: "/api/json?from=/:path",
+        has: [{ type: "query", key: "json", value: "true" }],
+      },
+    ]);
+    expect(config.redirects).toEqual([
+      { source: "/redirect-1", destination: "/somewhere-else" },
+      {
+        source: "/redirect-no-basepath",
+        destination: "/another",
+        basePath: false,
+      },
+    ]);
+    expect(config.headers).toEqual([
+      { source: "/add-header", headers: [{ key: "x-hello", value: "world" }] },
+    ]);
   });
 });

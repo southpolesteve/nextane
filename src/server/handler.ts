@@ -36,6 +36,21 @@ import {
   type PreviewCredentials,
   type PreviewState,
 } from "./preview";
+import {
+  consumedDestinationParams,
+  evaluateRuleConditions,
+  isExternalDestination,
+  matchHeaderRules,
+  matchRedirectRule,
+  matchRuleSource,
+  redirectStatusFor,
+  substituteRuleParams,
+  validateRuleSource,
+  type HeaderRule,
+  type RedirectRule,
+  type RewriteRule,
+  type RuleRequestContext,
+} from "./route-rules";
 
 interface AssetBinding {
   fetch(request: Request): Promise<Response>;
@@ -52,7 +67,9 @@ export interface NextaneManifest {
   loadDocument: null | (() => Promise<Record<string, unknown>>);
   loadError: null | (() => Promise<Record<string, unknown>>);
   config?: {
-    rewrites?: Array<{ source: string; destination: string }>;
+    rewrites?: RewriteRule[];
+    redirects?: RedirectRule[];
+    headers?: HeaderRule[];
     crossOrigin?: string;
     trailingSlash?: boolean;
   };
@@ -163,78 +180,48 @@ function searchQuery(url: URL, params: ParsedUrlQuery): ParsedUrlQuery {
   return { ...query, ...params };
 }
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, (character) => `\\${character}`);
-}
-
-function rewriteParameterMatches(source: string): RegExpMatchArray[] {
-  return [...source.matchAll(/:([A-Za-z0-9_]+)([+*?])?/g)];
-}
-
-function validateRewriteSource(source: string): void {
-  const parameters = rewriteParameterMatches(source);
-  const greedyParameters = parameters.filter(
-    (match) => match[2] === "+" || match[2] === "*",
-  );
-  if (greedyParameters.length > 1) {
-    throw new Error(
-      `Unsupported ambiguous rewrite source "${source}": only one * or + parameter is allowed`,
-    );
-  }
-  for (let index = 1; index < parameters.length; index += 1) {
-    const previous = parameters[index - 1];
-    const previousEnd = (previous.index ?? 0) + previous[0].length;
-    if (parameters[index].index === previousEnd) {
-      throw new Error(
-        `Unsupported ambiguous rewrite source "${source}": parameters must be separated by literal text`,
-      );
-    }
-  }
-}
-
-function matchRewrite(
-  source: string,
-  pathname: string,
-): Record<string, string> | null {
-  const parameterMatches = rewriteParameterMatches(source);
-  const names: string[] = [];
-  let pattern = "^";
-  let cursor = 0;
-  for (const match of parameterMatches) {
-    pattern += escapeRegex(source.slice(cursor, match.index));
-    names.push(match[1]);
-    if (match[2] === "+") pattern += "(.+)";
-    else if (match[2] === "*") pattern += "(.*)";
-    else if (match[2] === "?") pattern += "([^/]*)";
-    else pattern += "([^/]+)";
-    cursor = (match.index ?? 0) + match[0].length;
-  }
-  pattern += `${escapeRegex(source.slice(cursor))}/?$`;
-  const matched = new RegExp(pattern).exec(pathname);
-  if (!matched) return null;
-  return Object.fromEntries(
-    names.map((name, index) => [name, decodeURIComponent(matched[index + 1])]),
-  );
+interface RewriteResolution {
+  pageUrl: URL;
+  displayUrl: URL;
+  resolvedUrl: URL;
+  external?: URL;
 }
 
 function resolveRewrite(
   manifest: NextaneManifest,
   requestUrl: URL,
-): { pageUrl: URL; displayUrl: URL; resolvedUrl: URL } {
+  context: RuleRequestContext,
+): RewriteResolution {
   for (const rewrite of manifest.config?.rewrites ?? []) {
-    const values = matchRewrite(rewrite.source, requestUrl.pathname);
+    const values = matchRuleSource(rewrite.source, requestUrl.pathname);
     if (!values) continue;
-    const consumedParameters = new Set(
-      [...rewrite.destination.matchAll(/:([A-Za-z0-9_]+)/g)].map(
-        (match) => match[1],
-      ),
-    );
-    const destination = rewrite.destination.replace(
-      /:([A-Za-z0-9_]+)/g,
-      (_match, name: string) => encodeURIComponent(values[name] ?? ""),
+    const captured = evaluateRuleConditions(rewrite, context);
+    if (!captured) continue;
+    const merged = { ...values, ...captured };
+
+    if (isExternalDestination(rewrite.destination)) {
+      const externalUrl = new URL(
+        substituteRuleParams(rewrite.destination, merged, encodeURIComponent),
+      );
+      for (const [name, value] of requestUrl.searchParams) {
+        externalUrl.searchParams.append(name, value);
+      }
+      return {
+        pageUrl: requestUrl,
+        displayUrl: requestUrl,
+        resolvedUrl: requestUrl,
+        external: externalUrl,
+      };
+    }
+
+    const consumedParameters = consumedDestinationParams(rewrite.destination);
+    const destination = substituteRuleParams(
+      rewrite.destination,
+      merged,
+      encodeURIComponent,
     );
     const pageUrl = new URL(destination, requestUrl);
-    for (const [name, value] of Object.entries(values)) {
+    for (const [name, value] of Object.entries(merged)) {
       if (
         !consumedParameters.has(name) &&
         !pageUrl.searchParams.has(name)
@@ -258,6 +245,44 @@ function resolveRewrite(
     displayUrl: requestUrl,
     resolvedUrl: requestUrl,
   };
+}
+
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+];
+
+async function proxyExternalRewrite(
+  request: Request,
+  target: URL,
+): Promise<Response> {
+  const headers = new Headers(request.headers);
+  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
+  const response = await fetch(
+    new Request(target, {
+      method: request.method,
+      headers,
+      body:
+        request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : request.body,
+      redirect: "manual",
+    }),
+  );
+  const responseHeaders = new Headers(response.headers);
+  for (const name of HOP_BY_HOP_HEADERS) responseHeaders.delete(name);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: responseHeaders,
+  });
 }
 
 function canonicalPathname(
@@ -1666,7 +1691,13 @@ export function createNextaneHandler(
   options: HandlerOptions = {},
 ) {
   for (const rewrite of manifest.config?.rewrites ?? []) {
-    validateRewriteSource(rewrite.source);
+    validateRuleSource(rewrite.source, "rewrite");
+  }
+  for (const redirect of manifest.config?.redirects ?? []) {
+    validateRuleSource(redirect.source, "redirect");
+  }
+  for (const header of manifest.config?.headers ?? []) {
+    validateRuleSource(header.source, "header");
   }
   const previewCredentials = previewCredentialsFor(manifest);
 
@@ -1723,6 +1754,28 @@ export function createNextaneHandler(
           const location = new URL(request.url);
           location.pathname = canonical;
           return Response.redirect(location, 308);
+        }
+      }
+
+      const ruleContext: RuleRequestContext = {
+        url,
+        headers: request.headers,
+        cookies: parseCookies(request.headers.get("cookie")),
+      };
+      if (!url.pathname.startsWith("/_next/")) {
+        const redirected = matchRedirectRule(
+          manifest.config?.redirects ?? [],
+          url.pathname,
+          ruleContext,
+        );
+        if (redirected) {
+          return new Response(null, {
+            status: redirectStatusFor(redirected.rule),
+            headers: {
+              location: redirected.location.toString(),
+              "cache-control": "private, no-store",
+            },
+          });
         }
       }
 
@@ -1821,7 +1874,10 @@ export function createNextaneHandler(
         );
       }
 
-      const routing = resolveRewrite(manifest, url);
+      const routing = resolveRewrite(manifest, url, ruleContext);
+      if (routing.external) {
+        return proxyExternalRewrite(request, routing.external);
+      }
       const match = matchRoute(manifest.routes, routing.pageUrl.pathname);
       if (!match) {
         return renderNotFound(manifest, request, env);
@@ -1899,15 +1955,31 @@ export function createNextaneHandler(
     env: NextaneEnvironment,
   ): Promise<Response> {
     const sanitized = stripReservedRequestHeaders(request);
-    const previewState = resolvePreviewState(
-      parseCookies(sanitized.headers.get("cookie")),
-      previewCredentials,
-    );
+    const cookies = parseCookies(sanitized.headers.get("cookie"));
+    const previewState = resolvePreviewState(cookies, previewCredentials);
+    let response = await handleRequest(sanitized, env, previewState);
+
+    const headerRules = manifest.config?.headers ?? [];
+    if (headerRules.length > 0 && response.status !== 101) {
+      const url = new URL(sanitized.url);
+      const applied = matchHeaderRules(headerRules, url.pathname, {
+        url,
+        headers: sanitized.headers,
+        cookies,
+      });
+      if (applied.length > 0) {
+        const headers = new Headers(response.headers);
+        for (const header of applied) headers.set(header.key, header.value);
+        response = new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+        });
+      }
+    }
+
     return withDefaultSecurityHeaders(
-      withClearedPreviewCookies(
-        await handleRequest(sanitized, env, previewState),
-        previewState,
-      ),
+      withClearedPreviewCookies(response, previewState),
     );
   };
 }

@@ -1681,3 +1681,139 @@ describe("Preview Mode", () => {
     expect(await previewed.text()).toContain("post:draft-post");
   });
 });
+
+describe("next.config route rules", () => {
+  const jsonApiRoute = {
+    route: "/api/json",
+    regexSource: "^/api/json/?$",
+    params: [],
+    id: 7,
+    kind: "api" as const,
+    async load() {
+      return {
+        default(
+          request: { query: Record<string, unknown> },
+          reply: { json(value: unknown): void },
+        ) {
+          reply.json({ from: request.query.from ?? "" });
+        },
+      };
+    },
+  };
+
+  it("applies has-condition rewrites with custom parameter patterns", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [route, jsonApiRoute],
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          rewrites: [
+            {
+              source: "/:path(.*)",
+              has: [{ type: "query" as const, key: "json", value: "true" }],
+              destination: "/api/json?from=/:path",
+            },
+          ],
+        },
+      }),
+    );
+
+    const rewritten = await handler(
+      new Request("https://nextane.test/some/route/for?json=true"),
+      { ASSETS: assets },
+    );
+    expect(await rewritten.json()).toEqual({ from: "/some/route/for" });
+
+    const unmatched = await handler(
+      new Request("https://nextane.test/some/route/for"),
+      { ASSETS: assets },
+    );
+    expect(unmatched.status).toBe(404);
+
+    const direct = await handler(
+      new Request("https://nextane.test/api/json"),
+      { ASSETS: assets },
+    );
+    expect(await direct.json()).toEqual({ from: "" });
+  });
+
+  it("issues configured redirects with Next status codes", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          redirects: [
+            {
+              source: "/redirect-1",
+              destination: "/somewhere-else",
+              permanent: false,
+            },
+            {
+              source: "/old/:slug",
+              destination: "/items/:slug",
+              permanent: true,
+            },
+          ],
+        },
+      }),
+    );
+
+    const temporary = await handler(
+      new Request("https://nextane.test/redirect-1?keep=1"),
+      { ASSETS: assets },
+    );
+    expect(temporary.status).toBe(307);
+    const location = new URL(temporary.headers.get("location") ?? "");
+    expect(location.pathname).toBe("/somewhere-else");
+    expect(location.searchParams.get("keep")).toBe("1");
+
+    const permanent = await handler(
+      new Request("https://nextane.test/old/widget"),
+      { ASSETS: assets },
+    );
+    expect(permanent.status).toBe(308);
+    expect(new URL(permanent.headers.get("location") ?? "").pathname).toBe(
+      "/items/widget",
+    );
+  });
+
+  it("applies configured headers to matching responses", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          headers: [
+            {
+              source: "/items/:slug",
+              headers: [{ key: "x-hello", value: "world" }],
+            },
+            {
+              source: "/items/:slug",
+              has: [{ type: "header" as const, key: "x-flag" }],
+              headers: [{ key: "x-conditional", value: "yes" }],
+            },
+          ],
+        },
+      }),
+    );
+
+    const plain = await handler(
+      new Request("https://nextane.test/items/widget"),
+      { ASSETS: assets },
+    );
+    expect(plain.headers.get("x-hello")).toBe("world");
+    expect(plain.headers.get("x-conditional")).toBeNull();
+
+    const flagged = await handler(
+      new Request("https://nextane.test/items/widget", {
+        headers: { "x-flag": "1" },
+      }),
+      { ASSETS: assets },
+    );
+    expect(flagged.headers.get("x-hello")).toBe("world");
+    expect(flagged.headers.get("x-conditional")).toBe("yes");
+  });
+});

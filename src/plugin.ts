@@ -535,7 +535,9 @@ export async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
   const configPath = candidates
     .map((candidate) => path.join(root, candidate))
     .find(existsSync);
-  if (!configPath) return { rewrites: [], trailingSlash: false };
+  if (!configPath) {
+    return { rewrites: [], redirects: [], headers: [], trailingSlash: false };
+  }
 
   let loaded: unknown;
   try {

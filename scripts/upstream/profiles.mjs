@@ -156,6 +156,11 @@ export const upstreamSmokeSuites = [
     signatures: ["pages/multi-byte.js", "pages/api/user/login.js"],
   },
   {
+    id: "link-with-api-rewrite",
+    testFile: "test/e2e/link-with-api-rewrite/index.test.ts",
+    signatures: ["pages/api/json.js", "pages/index.js"],
+  },
+  {
     id: "prerender",
     testFile: "test/e2e/prerender.test.ts",
     signatures: [
