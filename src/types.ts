@@ -40,6 +40,12 @@ export interface NextaneServerResponse {
   ): NextaneServerResponse;
   write(data: string | Uint8Array): boolean;
   end(data?: string | Uint8Array): void;
+  setPreviewData?(
+    data: unknown,
+    options?: { maxAge?: number; path?: string },
+  ): NextaneServerResponse;
+  clearPreviewData?(options?: { path?: string }): NextaneServerResponse;
+  setDraftMode?(options?: { enable?: boolean }): NextaneServerResponse;
 }
 
 export interface Redirect {
@@ -75,6 +81,7 @@ export interface GetStaticPropsContext {
   params?: ParsedUrlQuery;
   preview?: boolean;
   previewData?: unknown;
+  draftMode?: boolean;
   revalidateReason?: "build" | "stale" | "on-demand";
 }
 
@@ -165,6 +172,9 @@ export interface NextApiRequest {
   readonly body: unknown;
   readonly raw: Request;
   readonly nextUrl: URL;
+  readonly preview?: boolean;
+  readonly previewData?: unknown;
+  readonly draftMode?: boolean;
 }
 
 export interface NextApiResponse<Data = unknown> {
@@ -187,7 +197,12 @@ export interface NextApiResponse<Data = unknown> {
   ): NextApiResponse<Data>;
   write(data: string | Uint8Array): boolean;
   redirect(statusOrUrl: number | string, url?: string): void;
-  setPreviewData(data: unknown): NextApiResponse<Data>;
+  setPreviewData(
+    data: unknown,
+    options?: { maxAge?: number; path?: string },
+  ): NextApiResponse<Data>;
+  clearPreviewData(options?: { path?: string }): NextApiResponse<Data>;
+  setDraftMode(options?: { enable?: boolean }): NextApiResponse<Data>;
   revalidate(
     pathname: string,
     options?: { unstable_onlyGenerated?: boolean },

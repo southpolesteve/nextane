@@ -11,6 +11,8 @@ import {
   createNextaneHandler,
   type NextaneManifest,
 } from "../../src/server/handler";
+import { runApiRoute } from "../../src/server/api";
+import { generatePreviewCredentials } from "../../src/server/preview";
 
 const route = {
   route: "/items/[slug]",
@@ -1457,5 +1459,225 @@ describe("Pages Router server compatibility", () => {
     expect(html).not.toContain(malicious);
     expect(html).not.toContain("<script>globalThis.pwned");
     expect(html).toContain("&lt;/pre&gt;&lt;script&gt;");
+  });
+});
+
+describe("Preview Mode", () => {
+  const previewRoute = (log: string[]) => ({
+    route: "/preview",
+    regexSource: "^/preview/?$",
+    params: [],
+    id: 0,
+    kind: "page" as const,
+    async load() {
+      return {
+        default: Page,
+        async getStaticProps(context: {
+          preview?: boolean;
+          previewData?: unknown;
+        }) {
+          log.push(JSON.stringify(context.previewData ?? null));
+          return {
+            props: {
+              requestUrl: context.preview
+                ? `preview:${JSON.stringify(context.previewData)}`
+                : "static",
+            },
+          };
+        },
+      };
+    },
+  });
+
+  async function enablePreviewCookies(
+    credentials: ReturnType<typeof generatePreviewCredentials>,
+  ): Promise<string> {
+    const enable = await runApiRoute(
+      {
+        default(
+          _request: unknown,
+          reply: {
+            setPreviewData(data: unknown): void;
+            json(value: unknown): void;
+          },
+        ) {
+          reply.setPreviewData({ hello: "world" });
+          reply.json({ enabled: true });
+        },
+      },
+      new Request("https://nextane.test/api/enable"),
+      {},
+      { previewCredentials: credentials },
+    );
+    return enable.headers
+      .getSetCookie()
+      .map((cookie) => cookie.split(";", 1)[0])
+      .join("; ");
+  }
+
+  it("renders per-request preview props without touching the shared artifact path", async () => {
+    const credentials = generatePreviewCredentials();
+    const log: string[] = [];
+    const loadCachedArtifact = vi.fn();
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [previewRoute(log)],
+        loadApp: null,
+        loadDocument: null,
+        preview: credentials,
+      }),
+      { loadCachedArtifact },
+    );
+    const cookieHeader = await enablePreviewCookies(credentials);
+
+    const response = await handler(
+      new Request("https://nextane.test/preview", {
+        headers: { cookie: cookieHeader },
+      }),
+      { ASSETS: assets },
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('preview:{"hello":"world"}');
+    expect(html).toContain("__N_PREVIEW");
+    expect(response.headers.get("cache-control")).toBe(
+      "private, no-cache, no-store, max-age=0, must-revalidate",
+    );
+    expect(loadCachedArtifact).not.toHaveBeenCalled();
+    expect(log).toEqual(['{"hello":"world"}']);
+  });
+
+  it("serves non-preview requests from the shared path and clears stale cookies", async () => {
+    const credentials = generatePreviewCredentials();
+    const log: string[] = [];
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [previewRoute(log)],
+        loadApp: null,
+        loadDocument: null,
+        preview: credentials,
+      }),
+    );
+
+    const plain = await handler(new Request("https://nextane.test/preview"), {
+      ASSETS: assets,
+    });
+    expect(await plain.text()).toContain("static");
+    expect(plain.headers.getSetCookie()).toEqual([]);
+
+    const stale = await handler(
+      new Request("https://nextane.test/preview", {
+        headers: {
+          cookie: `__prerender_bypass=${generatePreviewCredentials().previewModeId}`,
+        },
+      }),
+      { ASSETS: assets },
+    );
+    expect(await stale.text()).toContain("static");
+    const cleared = stale.headers.getSetCookie();
+    expect(cleared).toHaveLength(2);
+    for (const cookie of cleared) {
+      expect(cookie).toContain("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+    }
+    expect(log).toEqual(["null", "null"]);
+  });
+
+  it("provides preview context to getServerSideProps", async () => {
+    const credentials = generatePreviewCredentials();
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [
+          {
+            route: "/gssp",
+            regexSource: "^/gssp/?$",
+            params: [],
+            id: 0,
+            kind: "page" as const,
+            async load() {
+              return {
+                default: Page,
+                async getServerSideProps(context: {
+                  preview?: boolean;
+                  previewData?: unknown;
+                  draftMode?: boolean;
+                }) {
+                  return {
+                    props: {
+                      requestUrl: JSON.stringify({
+                        preview: context.preview,
+                        previewData: context.previewData,
+                        draftMode: context.draftMode,
+                      }),
+                    },
+                  };
+                },
+              };
+            },
+          },
+        ],
+        loadApp: null,
+        loadDocument: null,
+        preview: credentials,
+      }),
+    );
+    const cookieHeader = await enablePreviewCookies(credentials);
+    const response = await handler(
+      new Request("https://nextane.test/gssp", {
+        headers: { cookie: cookieHeader },
+      }),
+      { ASSETS: assets },
+    );
+    const html = await response.text();
+    expect(html).toContain('"preview":true');
+    expect(html).toContain('"draftMode":true');
+    expect(html).toContain('"hello":"world"');
+  });
+
+  it("bypasses fallback:false 404s while previewing", async () => {
+    const credentials = generatePreviewCredentials();
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [
+          {
+            route: "/posts/[slug]",
+            regexSource: "^/posts/([^/]+)/?$",
+            params: [{ name: "slug", kind: "single" as const }],
+            id: 0,
+            kind: "page" as const,
+            async load() {
+              return {
+                default: Page,
+                async getStaticPaths() {
+                  return { paths: [], fallback: false };
+                },
+                async getStaticProps({ params }: { params: { slug: string } }) {
+                  return { props: { requestUrl: `post:${params.slug}` } };
+                },
+              };
+            },
+          },
+        ],
+        loadApp: null,
+        loadDocument: null,
+        preview: credentials,
+      }),
+    );
+
+    const blocked = await handler(
+      new Request("https://nextane.test/posts/draft-post"),
+      { ASSETS: assets },
+    );
+    expect(blocked.status).toBe(404);
+
+    const cookieHeader = await enablePreviewCookies(credentials);
+    const previewed = await handler(
+      new Request("https://nextane.test/posts/draft-post", {
+        headers: { cookie: cookieHeader },
+      }),
+      { ASSETS: assets },
+    );
+    expect(previewed.status).toBe(200);
+    expect(await previewed.text()).toContain("post:draft-post");
   });
 });

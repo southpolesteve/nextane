@@ -22,8 +22,20 @@ import { runApiRoute } from "./api";
 import {
   createPageRequest,
   PageResponse,
+  parseCookies,
   type ResponseSnapshot,
 } from "./http";
+import {
+  attachPreviewApi,
+  clearPreviewCookies,
+  DISABLED_PREVIEW,
+  generatePreviewCredentials,
+  PREVIEW_CACHE_CONTROL,
+  resolvePreviewState,
+  validatePreviewCredentials,
+  type PreviewCredentials,
+  type PreviewState,
+} from "./preview";
 
 interface AssetBinding {
   fetch(request: Request): Promise<Response>;
@@ -44,6 +56,7 @@ export interface NextaneManifest {
     crossOrigin?: string;
     trailingSlash?: boolean;
   };
+  preview?: PreviewCredentials;
 }
 
 interface ServerRouteManifest extends ClientRoute {
@@ -85,6 +98,7 @@ export interface RenderArtifact {
   crossOrigin?: string;
   trailingSlash?: boolean;
   cacheable?: boolean;
+  preview?: boolean;
   generatedAt: number;
 }
 
@@ -104,6 +118,21 @@ const staticPathsCache = new WeakMap<
   Function,
   Promise<GetStaticPathsResult>
 >();
+const manifestPreviewCredentials = new WeakMap<
+  NextaneManifest,
+  PreviewCredentials
+>();
+
+function previewCredentialsFor(manifest: NextaneManifest): PreviewCredentials {
+  const configured = validatePreviewCredentials(manifest.preview);
+  if (configured) return configured;
+  let generated = manifestPreviewCredentials.get(manifest);
+  if (!generated) {
+    generated = generatePreviewCredentials();
+    manifestPreviewCredentials.set(manifest, generated);
+  }
+  return generated;
+}
 
 export function cacheTagForPath(pathname: string): string {
   return `nextane:path:${encodeURIComponent(pathname).slice(0, 900)}`;
@@ -292,9 +321,17 @@ async function resolvePageData(
   displayUrl: URL,
   response: PageResponse,
   skipPageInitialProps: boolean,
+  preview: PreviewState = DISABLED_PREVIEW,
 ): Promise<PageResolution> {
   const query = searchQuery(pageUrl, params);
   const req = createPageRequest(request);
+  const previewContext = preview.enabled
+    ? {
+        preview: true as const,
+        previewData: preview.previewData,
+        draftMode: true as const,
+      }
+    : { preview: false as const, draftMode: false as const };
 
   if (typeof pageModule.getServerSideProps === "function") {
     const context: GetServerSidePropsContext = {
@@ -303,8 +340,7 @@ async function resolvePageData(
       params: Object.keys(params).length > 0 ? params : undefined,
       query,
       resolvedUrl: `${resolvedUrl.pathname}${resolvedUrl.search}`,
-      preview: false,
-      draftMode: false,
+      ...previewContext,
     };
     const result = (await pageModule.getServerSideProps(
       context,
@@ -338,7 +374,7 @@ async function resolvePageData(
 
   if (typeof pageModule.getStaticProps === "function") {
     const staticPath = await staticPathInfo(pageModule, params, pageUrl);
-    if (!staticPath.matched && staticPath.fallback === false) {
+    if (!staticPath.matched && staticPath.fallback === false && !preview.enabled) {
       return {
         pageProps: {},
         gsp: true,
@@ -354,6 +390,13 @@ async function resolvePageData(
           ? params
           : undefined,
       revalidateReason: "build",
+      ...(preview.enabled
+        ? {
+            preview: true,
+            previewData: preview.previewData,
+            draftMode: true,
+          }
+        : {}),
     })) as GetStaticPropsResult<Record<string, unknown>>;
     if ("redirect" in result) {
       return {
@@ -685,6 +728,7 @@ async function createRenderArtifact(
   displayUrl = pageUrl,
   resolvedUrl = pageUrl,
   fallbackShell = false,
+  preview: PreviewState = DISABLED_PREVIEW,
 ): Promise<RenderArtifact> {
   const pageModule = await route.load();
   const Page = pageModule.default as ComponentBody<Record<string, unknown>> | undefined;
@@ -709,7 +753,10 @@ async function createRenderArtifact(
   const requestDependentInitialProps =
     typeof App?.getInitialProps === "function" ||
     typeof Document?.getInitialProps === "function";
-  const response = new PageResponse();
+  const response = attachPreviewApi(
+    new PageResponse(),
+    previewCredentialsFor(manifest),
+  );
   const resolution = forcedPageProps
     ? {
         pageProps: forcedPageProps,
@@ -733,6 +780,7 @@ async function createRenderArtifact(
         displayUrl,
         response,
         typeof App?.getInitialProps === "function",
+        preview,
       );
   const query = resolution.gsp ? { ...params } : searchQuery(pageUrl, params);
   const req = createPageRequest(request);
@@ -790,8 +838,10 @@ async function createRenderArtifact(
     trailingSlash: manifest.config?.trailingSlash,
     cacheable:
       resolution.gsp &&
+      !preview.enabled &&
       !requestDependentInitialProps &&
       !hasSetCookie(resolution.response),
+    preview: preview.enabled,
     generatedAt: Date.now(),
   };
   if (
@@ -810,7 +860,7 @@ async function createRenderArtifact(
     asPath: `${displayUrl.pathname}${displayUrl.search}`,
     basePath: "",
     isReady: true,
-    isPreview: false,
+    isPreview: preview.enabled,
     isFallback: fallbackShell,
     trailingSlash: manifest.config?.trailingSlash,
   };
@@ -955,6 +1005,7 @@ function artifactData(artifact: RenderArtifact) {
     pageProps: artifact.pageProps,
     ...(artifact.gsp ? { __N_SSG: true } : {}),
     ...(artifact.gssp ? { __N_SSP: true } : {}),
+    ...(artifact.preview ? { __N_PREVIEW: true } : {}),
   };
 }
 
@@ -1020,6 +1071,7 @@ async function renderArtifactResponse(
     props: {
       ...(artifact.appProps ?? {}),
       pageProps: artifact.pageProps,
+      ...(artifact.preview ? { __N_PREVIEW: true } : {}),
     },
     page: artifact.route,
     query: artifact.query,
@@ -1317,7 +1369,27 @@ async function loadArtifact(
   shouldRender = true,
   displayUrl = pageUrl,
   resolvedUrl = pageUrl,
+  preview: PreviewState = DISABLED_PREVIEW,
 ): Promise<{ artifact: RenderArtifact; cacheStatus?: string | null }> {
+  if (preview.enabled) {
+    // Preview renders are always per-request and must never read from or
+    // write into the shared static artifact path.
+    return {
+      artifact: await createRenderArtifact(
+        manifest,
+        route,
+        request,
+        params,
+        pageUrl,
+        undefined,
+        shouldRender,
+        displayUrl,
+        resolvedUrl,
+        false,
+        preview,
+      ),
+    };
+  }
   const usesStaticProps = await routeUsesStaticProps(route);
   const usesRequestInitialProps =
     usesStaticProps && (await manifestUsesRequestInitialProps(manifest));
@@ -1498,6 +1570,36 @@ function stripReservedRequestHeaders(request: Request): Request {
   return sanitized;
 }
 
+function withPreviewResponseHeaders(
+  response: Response,
+  preview: PreviewState,
+): Response {
+  if (!preview.enabled) return response;
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", PREVIEW_CACHE_CONTROL);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function withClearedPreviewCookies(
+  response: Response,
+  preview: PreviewState,
+): Response {
+  if (!preview.shouldClear || response.status === 101) return response;
+  const headers = new Headers(response.headers);
+  for (const cookie of clearPreviewCookies()) {
+    headers.append("set-cookie", cookie);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 function withDefaultSecurityHeaders(response: Response): Response {
   if (response.status === 101) return response;
   const headers = new Headers(response.headers);
@@ -1521,10 +1623,12 @@ export function createNextaneHandler(
   for (const rewrite of manifest.config?.rewrites ?? []) {
     validateRewriteSource(rewrite.source);
   }
+  const previewCredentials = previewCredentialsFor(manifest);
 
   const handleRequest = async function handleRequest(
     request: Request,
     env: NextaneEnvironment,
+    previewState: PreviewState,
   ): Promise<Response> {
     const url = new URL(request.url);
 
@@ -1596,6 +1700,9 @@ export function createNextaneHandler(
           options,
           pageUrl,
           false,
+          pageUrl,
+          pageUrl,
+          previewState,
         );
         if (artifact.response?.ended) {
           const responseHeaders = new Headers(artifact.response.headers);
@@ -1634,10 +1741,13 @@ export function createNextaneHandler(
         if (artifact.gsp && !artifact.cacheable) {
           headers.set("cache-control", "private, no-store");
         }
-        return Response.json(artifactData(artifact), {
-          status: artifact.notFound ? 404 : 200,
-          headers,
-        });
+        return withPreviewResponseHeaders(
+          Response.json(artifactData(artifact), {
+            status: artifact.notFound ? 404 : 200,
+            headers,
+          }),
+          previewState,
+        );
       }
 
       const routing = resolveRewrite(manifest, url);
@@ -1653,6 +1763,8 @@ export function createNextaneHandler(
           searchQuery(routing.pageUrl, match.params),
           {
             revalidatePath: options.revalidatePath,
+            previewCredentials,
+            previewState,
           },
         );
       }
@@ -1679,11 +1791,15 @@ export function createNextaneHandler(
         true,
         routing.displayUrl,
         routing.resolvedUrl,
+        previewState,
       );
       if (artifact.notFound && match.route.route !== "/404") {
         return renderNotFound(manifest, request, env);
       }
-      return renderArtifactResponse(artifact, request, env, status, cacheStatus);
+      return withPreviewResponseHeaders(
+        await renderArtifactResponse(artifact, request, env, status, cacheStatus),
+        previewState,
+      );
     } catch (error) {
       console.error("[nextane] request failed", error);
       try {
@@ -1711,8 +1827,16 @@ export function createNextaneHandler(
     request: Request,
     env: NextaneEnvironment,
   ): Promise<Response> {
+    const sanitized = stripReservedRequestHeaders(request);
+    const previewState = resolvePreviewState(
+      parseCookies(sanitized.headers.get("cookie")),
+      previewCredentials,
+    );
     return withDefaultSecurityHeaders(
-      await handleRequest(stripReservedRequestHeaders(request), env),
+      withClearedPreviewCookies(
+        await handleRequest(sanitized, env, previewState),
+        previewState,
+      ),
     );
   };
 }

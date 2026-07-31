@@ -1,6 +1,6 @@
 import path from "node:path";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -675,9 +675,51 @@ export const errorLoader = ${
 `;
 }
 
+interface PreviewManifestCredentials {
+  previewModeId: string;
+  encryptionKey: string;
+  signingKey: string;
+}
+
+function previewCredentialFromEnv(
+  name: string,
+  pattern: RegExp,
+  fallbackBytes: number,
+): string {
+  const value = process.env[name];
+  if (value === undefined) return randomBytes(fallbackBytes).toString("hex");
+  if (!pattern.test(value)) {
+    throw new Error(
+      `[nextane] ${name} must be a hex string matching ${pattern}`,
+    );
+  }
+  return value;
+}
+
+export function createPreviewCredentials(): PreviewManifestCredentials {
+  return {
+    previewModeId: previewCredentialFromEnv(
+      "NEXTANE_PREVIEW_MODE_ID",
+      /^[0-9a-f]{16,64}$/i,
+      16,
+    ),
+    encryptionKey: previewCredentialFromEnv(
+      "NEXTANE_PREVIEW_ENCRYPTION_KEY",
+      /^[0-9a-f]{64}$/i,
+      32,
+    ),
+    signingKey: previewCredentialFromEnv(
+      "NEXTANE_PREVIEW_SIGNING_KEY",
+      /^[0-9a-f]{64}$/i,
+      32,
+    ),
+  };
+}
+
 async function serverManifestSource(
   root: string,
   buildId: string,
+  preview: PreviewManifestCredentials,
 ): Promise<string> {
   const routes = await scanPages(root);
   const appPath = await findSpecialPage(root, "_app");
@@ -709,6 +751,7 @@ export const loadError = ${
       : "null"
   };
 export const config = ${serializeJavascriptValue(routingConfig)};
+export const preview = ${serializeJavascriptValue(preview)};
 `;
 }
 
@@ -720,6 +763,7 @@ function invalidateManifest(server: ViteDevServer, id: string) {
 export function nextane(): Plugin {
   let config: ResolvedConfig;
   const buildId = process.env.NEXTANE_BUILD_ID ?? randomUUID();
+  const previewCredentials = createPreviewCredentials();
 
   return {
     name: "nextane",
@@ -787,7 +831,7 @@ export function nextane(): Plugin {
     load(id) {
       if (id === RESOLVED_CLIENT_MANIFEST_ID) return clientManifestSource(config.root);
       if (id === RESOLVED_SERVER_MANIFEST_ID) {
-        return serverManifestSource(config.root, buildId);
+        return serverManifestSource(config.root, buildId, previewCredentials);
       }
       return null;
     },

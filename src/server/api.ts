@@ -4,6 +4,14 @@ import type {
   ParsedUrlQuery,
 } from "../types";
 import { createPageRequest } from "./http";
+import {
+  clearPreviewCookies,
+  draftModeCookies,
+  previewCookies,
+  type PreviewCookieOptions,
+  type PreviewCredentials,
+  type PreviewState,
+} from "./preview";
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
 
@@ -148,6 +156,8 @@ interface ApiRuntimeOptions {
     pathname: string,
     options?: { unstable_onlyGenerated?: boolean },
   ) => Promise<boolean> | boolean;
+  previewCredentials?: PreviewCredentials;
+  previewState?: PreviewState;
 }
 
 class ApiResponse<Data = unknown> implements NextApiResponse<Data> {
@@ -241,11 +251,37 @@ class ApiResponse<Data = unknown> implements NextApiResponse<Data> {
     this.#response = new Response(null, { status, headers: this.#headers });
   }
 
-  setPreviewData(data: unknown): never {
-    void data;
-    throw new Error(
-      "Nextane does not support Preview Mode; setPreviewData() cannot issue secure preview cookies",
+  #appendCookies(cookies: string[]) {
+    for (const cookie of cookies) this.#headers.append("set-cookie", cookie);
+  }
+
+  #requirePreviewCredentials(): PreviewCredentials {
+    if (!this.options.previewCredentials) {
+      throw new Error("Preview Mode is not configured for this handler");
+    }
+    return this.options.previewCredentials;
+  }
+
+  setPreviewData(data: unknown, options: PreviewCookieOptions = {}) {
+    this.#appendCookies(
+      previewCookies(this.#requirePreviewCredentials(), data, options),
     );
+    return this;
+  }
+
+  clearPreviewData(options: PreviewCookieOptions = {}) {
+    this.#appendCookies(clearPreviewCookies(options));
+    return this;
+  }
+
+  setDraftMode(options: { enable?: boolean } = { enable: true }) {
+    this.#appendCookies(
+      draftModeCookies(
+        this.#requirePreviewCredentials(),
+        options.enable !== false,
+      ),
+    );
+    return this;
   }
 
   async revalidate(
@@ -361,6 +397,7 @@ export async function runApiRoute(
       throw error;
     }
   }
+  const previewState = options.previewState;
   const apiRequest: NextApiRequest = {
     method: pageRequest.method,
     url: pageRequest.url,
@@ -370,6 +407,13 @@ export async function runApiRoute(
     body,
     raw: request,
     nextUrl,
+    ...(previewState?.enabled
+      ? {
+          preview: true,
+          previewData: previewState.previewData,
+          draftMode: true,
+        }
+      : {}),
   };
   const apiResponse = new ApiResponse(options);
   const returned = await handler(apiRequest, apiResponse);

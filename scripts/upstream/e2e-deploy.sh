@@ -15,6 +15,11 @@ if [ -z "${NEXTANE_DIR}" ]; then
 fi
 NEXTANE_DIR="$(cd "${NEXTANE_DIR}" && pwd)"
 
+# The upstream Next.js test runner may require an older Node than Nextane
+# targets. NEXTANE_NODE_BIN lets the fixture build/serve steps use Nextane's
+# own Node even when run-tests.js runs on the upstream-supported version.
+NEXTANE_NODE_BIN="${NEXTANE_NODE_BIN:-node}"
+
 BUILD_LOG=".nextane-upstream-build.log"
 SERVER_LOG=".nextane-upstream-server.log"
 PID_FILE=".nextane-upstream-server.pid"
@@ -88,7 +93,7 @@ fi
 : > "${BUILD_LOG}"
 : > "${SERVER_LOG}"
 
-node "${NEXTANE_DIR}/scripts/upstream/adapt-fixture.mjs" \
+"${NEXTANE_NODE_BIN}" "${NEXTANE_DIR}/scripts/upstream/adapt-fixture.mjs" \
   --root "$(pwd)" \
   --nextane-root "${NEXTANE_DIR}" >> "${BUILD_LOG}" 2>&1
 
@@ -96,7 +101,7 @@ export CI=1
 export NO_COLOR=1
 export FORCE_COLOR=0
 
-node "${NEXTANE_DIR}/node_modules/vite/bin/vite.js" \
+"${NEXTANE_NODE_BIN}" "${NEXTANE_DIR}/node_modules/vite/bin/vite.js" \
   build \
   --config nextane-upstream.vite.config.mjs >> "${BUILD_LOG}" 2>&1
 
@@ -122,7 +127,7 @@ echo "${PORT}" > "${PORT_FILE}"
   echo "NEXTANE_WRANGLER_CONFIG: ${GENERATED_CONFIG}"
 } >> "${BUILD_LOG}"
 
-node "${NEXTANE_DIR}/node_modules/wrangler/bin/wrangler.js" \
+"${NEXTANE_NODE_BIN}" "${NEXTANE_DIR}/node_modules/wrangler/bin/wrangler.js" \
   dev \
   --config "${GENERATED_CONFIG}" \
   --port "${PORT}" \

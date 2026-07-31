@@ -38,6 +38,11 @@ declare module "virtual:nextane-server-manifest" {
     rewrites: Array<{ source: string; destination: string }>;
     crossOrigin?: string;
   };
+  export const preview: {
+    previewModeId: string;
+    encryptionKey: string;
+    signingKey: string;
+  };
 }
 
 interface Window {

@@ -24,6 +24,11 @@ export interface NextaneManifest {
     crossOrigin?: string;
     trailingSlash?: boolean;
   };
+  preview?: {
+    previewModeId: string;
+    encryptionKey: string;
+    signingKey: string;
+  };
 }
 
 export interface RenderArtifact {

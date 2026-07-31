@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { runApiRoute } from "../../src/server/api";
+import { parseCookies } from "../../src/server/http";
+import {
+  generatePreviewCredentials,
+  resolvePreviewState,
+} from "../../src/server/preview";
 
 describe("Pages Router API routes", () => {
   it("adapts Request data to the classic request/response callback shape", async () => {
@@ -286,7 +291,7 @@ describe("Pages Router API routes", () => {
     });
   });
 
-  it("fails closed when an API route attempts to enable Preview Mode", async () => {
+  it("fails closed when Preview Mode credentials are not configured", async () => {
     await expect(
       runApiRoute(
         {
@@ -300,9 +305,122 @@ describe("Pages Router API routes", () => {
         new Request("https://nextane.test/api/preview"),
         {},
       ),
-    ).rejects.toThrow(
-      "Nextane does not support Preview Mode; setPreviewData() cannot issue secure preview cookies",
+    ).rejects.toThrow("Preview Mode is not configured for this handler");
+  });
+
+  it("issues signed preview cookies and round-trips preview data", async () => {
+    const credentials = generatePreviewCredentials();
+    const enabled = await runApiRoute(
+      {
+        default(
+          _request: unknown,
+          reply: {
+            setPreviewData(data: unknown): void;
+            json(value: unknown): void;
+          },
+        ) {
+          reply.setPreviewData({ hello: "world" });
+          reply.json({ enabled: true });
+        },
+      },
+      new Request("https://nextane.test/api/enable"),
+      {},
+      { previewCredentials: credentials },
     );
+
+    const cookies = enabled.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    const bypass = cookies.find((cookie) =>
+      cookie.startsWith("__prerender_bypass="),
+    );
+    const data = cookies.find((cookie) =>
+      cookie.startsWith("__next_preview_data="),
+    );
+    expect(bypass).toContain(credentials.previewModeId);
+    expect(bypass).toContain("HttpOnly");
+    expect(data).toBeDefined();
+
+    const cookieHeader = cookies
+      .map((cookie) => cookie.split(";", 1)[0])
+      .join("; ");
+    const state = resolvePreviewState(
+      parseCookies(cookieHeader),
+      credentials,
+    );
+    expect(state).toEqual({
+      enabled: true,
+      previewData: { hello: "world" },
+      shouldClear: false,
+    });
+
+    const echoed = await runApiRoute(
+      {
+        default(
+          request: { preview?: boolean; previewData?: unknown },
+          reply: { json(value: unknown): void },
+        ) {
+          reply.json({
+            preview: request.preview ?? false,
+            previewData: request.previewData ?? null,
+          });
+        },
+      },
+      new Request("https://nextane.test/api/echo", {
+        headers: { cookie: cookieHeader },
+      }),
+      {},
+      { previewCredentials: credentials, previewState: state },
+    );
+    expect(await echoed.json()).toEqual({
+      preview: true,
+      previewData: { hello: "world" },
+    });
+  });
+
+  it("rejects preview cookies that are not signed with the build keys", () => {
+    const credentials = generatePreviewCredentials();
+    const forged = resolvePreviewState(
+      {
+        __prerender_bypass: credentials.previewModeId,
+        __next_preview_data: "forged.payload.value.signature",
+      },
+      credentials,
+    );
+    expect(forged).toEqual({ enabled: false, shouldClear: true });
+
+    const foreign = resolvePreviewState(
+      {
+        __prerender_bypass: generatePreviewCredentials().previewModeId,
+      },
+      credentials,
+    );
+    expect(foreign).toEqual({ enabled: false, shouldClear: true });
+  });
+
+  it("clears preview cookies with expired duplicates", async () => {
+    const credentials = generatePreviewCredentials();
+    const cleared = await runApiRoute(
+      {
+        default(
+          _request: unknown,
+          reply: {
+            clearPreviewData(): void;
+            json(value: unknown): void;
+          },
+        ) {
+          reply.clearPreviewData();
+          reply.json({ cleared: true });
+        },
+      },
+      new Request("https://nextane.test/api/disable"),
+      {},
+      { previewCredentials: credentials },
+    );
+    const cookies = cleared.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    for (const cookie of cookies) {
+      expect(cookie).toContain("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+    }
   });
 
   it("supports Next-style redirects", async () => {
