@@ -213,7 +213,10 @@ async function copyOverlay(nextaneRoot, profile, fixtureRoot) {
 
 function aliasEntries(nextaneRoot) {
   const source = path.join(nextaneRoot, "src");
-  const octane = path.join(nextaneRoot, "node_modules", "octane", "dist");
+  // "octane" is intentionally NOT aliased: a static alias would bypass the
+  // octane compiler's environment-aware runtime resolution and load the
+  // browser runtime inside the Worker. The fixture instead gets a
+  // node_modules/octane symlink so bare specifiers resolve normally.
   return [
     ["nextane/head", path.join(source, "runtime", "head.tsrx")],
     ["nextane/document", path.join(source, "runtime", "document.tsrx")],
@@ -223,9 +226,6 @@ function aliasEntries(nextaneRoot) {
     ["nextane/server", path.join(source, "server", "handler.ts")],
     ["nextane/types", path.join(source, "types.ts")],
     ["nextane", path.join(source, "index.ts")],
-    ["octane/static", path.join(octane, "static", "index.js")],
-    ["octane/server", path.join(octane, "server", "index.js")],
-    ["octane", path.join(octane, "index.js")],
   ];
 }
 
@@ -392,6 +392,15 @@ async function writeScaffolding(root, nextaneRoot, profile) {
   const clientUrl = pathToFileURL(
     path.join(nextaneRoot, "src", "client.ts"),
   ).href;
+  const octaneLink = path.join(root, "node_modules", "octane");
+  await fs.mkdir(path.dirname(octaneLink), { recursive: true });
+  if (!(await exists(octaneLink))) {
+    await fs.symlink(
+      path.join(nextaneRoot, "node_modules", "octane"),
+      octaneLink,
+      "dir",
+    );
+  }
   await Promise.all([
     fs.writeFile(
       path.join(root, "nextane-upstream.vite.config.mjs"),

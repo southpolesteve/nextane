@@ -11,6 +11,13 @@ import {
   type ViteDevServer,
 } from "vite";
 import { findSpecialPage, scanPages } from "./routing/scan.ts";
+import {
+  validateRuleSource,
+  type HeaderRule,
+  type RedirectRule,
+  type RewriteRule,
+  type RouteHas,
+} from "./server/route-rules.ts";
 
 const CLIENT_MANIFEST_ID = "virtual:nextane-client-manifest";
 const SERVER_MANIFEST_ID = "virtual:nextane-server-manifest";
@@ -43,7 +50,9 @@ const PUBLIC_RUNTIME_ALIASES = [
 }));
 
 interface RoutingConfig {
-  rewrites: Array<{ source: string; destination: string }>;
+  rewrites: RewriteRule[];
+  redirects: RedirectRule[];
+  headers: HeaderRule[];
   crossOrigin?: string;
   trailingSlash: boolean;
 }
@@ -59,7 +68,7 @@ const ROUTING_FILE_EXTENSIONS = [
   "ts",
   "tsx",
 ];
-const UNSUPPORTED_SECURITY_CONFIG = ["headers", "redirects", "i18n"];
+const UNSUPPORTED_SECURITY_CONFIG = ["i18n"];
 
 export function assertNoUnsupportedRoutingFiles(root: string) {
   const unsupported = ["", "src"].flatMap((directory) =>
@@ -587,30 +596,142 @@ export async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
               : []),
           ]
         : [];
-  const rewrites = rewriteGroups.flatMap((rewrite) => {
-    if (
-      !rewrite ||
-      typeof rewrite !== "object" ||
-      typeof (rewrite as Record<string, unknown>).source !== "string" ||
-      typeof (rewrite as Record<string, unknown>).destination !== "string"
-    ) {
-      return [];
-    }
-    return [
-      {
-        source: (rewrite as { source: string }).source,
-        destination: (rewrite as { destination: string }).destination,
-      },
-    ];
-  });
+  const rewrites = rewriteGroups.flatMap((rewrite) =>
+    sanitizeRewriteRule(rewrite),
+  );
+  const redirectValue =
+    typeof config.redirects === "function" ? await config.redirects() : [];
+  const redirects = (Array.isArray(redirectValue) ? redirectValue : []).flatMap(
+    (redirect) => sanitizeRedirectRule(redirect),
+  );
+  const headerValue =
+    typeof config.headers === "function" ? await config.headers() : [];
+  const headers = (Array.isArray(headerValue) ? headerValue : []).flatMap(
+    (header) => sanitizeHeaderRule(header),
+  );
+
+  for (const rule of rewrites) validateRuleSource(rule.source, "rewrite");
+  for (const rule of redirects) validateRuleSource(rule.source, "redirect");
+  for (const rule of headers) validateRuleSource(rule.source, "header");
 
   return {
     rewrites,
+    redirects,
+    headers,
     trailingSlash: config.trailingSlash === true,
     ...(typeof config.crossOrigin === "string"
       ? { crossOrigin: config.crossOrigin }
       : {}),
   };
+}
+
+function sanitizeHasList(value: unknown): RouteHas[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const conditions = value.flatMap((item): RouteHas[] => {
+    if (!item || typeof item !== "object") return [];
+    const candidate = item as Record<string, unknown>;
+    const type = candidate.type;
+    if (
+      type !== "header" &&
+      type !== "cookie" &&
+      type !== "query" &&
+      type !== "host"
+    ) {
+      return [];
+    }
+    const key = typeof candidate.key === "string" ? candidate.key : "";
+    if (type !== "host" && key === "") return [];
+    return [
+      {
+        type,
+        key,
+        ...(typeof candidate.value === "string"
+          ? { value: candidate.value }
+          : {}),
+      },
+    ];
+  });
+  return conditions.length > 0 ? conditions : undefined;
+}
+
+function baseRuleFields(candidate: Record<string, unknown>) {
+  const has = sanitizeHasList(candidate.has);
+  const missing = sanitizeHasList(candidate.missing);
+  return {
+    ...(has ? { has } : {}),
+    ...(missing ? { missing } : {}),
+    ...(candidate.basePath === false ? { basePath: false as const } : {}),
+  };
+}
+
+function sanitizeRewriteRule(value: unknown): RewriteRule[] {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof (value as Record<string, unknown>).source !== "string" ||
+    typeof (value as Record<string, unknown>).destination !== "string"
+  ) {
+    return [];
+  }
+  const candidate = value as Record<string, unknown>;
+  return [
+    {
+      source: candidate.source as string,
+      destination: candidate.destination as string,
+      ...baseRuleFields(candidate),
+    },
+  ];
+}
+
+function sanitizeRedirectRule(value: unknown): RedirectRule[] {
+  const base = sanitizeRewriteRule(value);
+  if (base.length === 0) return [];
+  const candidate = value as Record<string, unknown>;
+  return [
+    {
+      ...base[0],
+      ...(candidate.permanent === true ? { permanent: true } : {}),
+      ...(typeof candidate.statusCode === "number"
+        ? { statusCode: candidate.statusCode }
+        : {}),
+    },
+  ];
+}
+
+function sanitizeHeaderRule(value: unknown): HeaderRule[] {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof (value as Record<string, unknown>).source !== "string" ||
+    !Array.isArray((value as Record<string, unknown>).headers)
+  ) {
+    return [];
+  }
+  const candidate = value as Record<string, unknown>;
+  const headers = (candidate.headers as unknown[]).flatMap((header) => {
+    if (
+      !header ||
+      typeof header !== "object" ||
+      typeof (header as Record<string, unknown>).key !== "string" ||
+      typeof (header as Record<string, unknown>).value !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        key: (header as { key: string }).key,
+        value: (header as { value: string }).value,
+      },
+    ];
+  });
+  if (headers.length === 0) return [];
+  return [
+    {
+      source: candidate.source as string,
+      headers,
+      ...baseRuleFields(candidate),
+    },
+  ];
 }
 
 function viteFileId(filePath: string): string {
@@ -823,9 +944,21 @@ export function nextane(): Plugin {
         }
       }
     },
-    resolveId(id) {
+    async resolveId(id, importer, options) {
       if (id === CLIENT_MANIFEST_ID) return RESOLVED_CLIENT_MANIFEST_ID;
       if (id === SERVER_MANIFEST_ID) return RESOLVED_SERVER_MANIFEST_ID;
+      if (
+        id === "octane" &&
+        (options?.ssr === true ||
+          this.environment?.config?.consumer === "server")
+      ) {
+        // Plain (non-.tsrx) server modules must get the server runtime; the
+        // octane plugin's own remap only fires for the legacy ssr flag.
+        const resolved = await this.resolve("octane/server", importer, {
+          skipSelf: true,
+        });
+        return resolved?.id ?? null;
+      }
       return null;
     },
     load(id) {

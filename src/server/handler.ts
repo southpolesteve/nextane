@@ -138,6 +138,20 @@ export function cacheTagForPath(pathname: string): string {
   return `nextane:path:${encodeURIComponent(pathname).slice(0, 900)}`;
 }
 
+// Ported from Next.js shared/lib/router/utils/is-bot.ts so fallback pages
+// render blocking for crawlers exactly like upstream.
+const HEADLESS_BROWSER_BOT_UA = /Googlebot(?!-)|Googlebot$/i;
+const HTML_LIMITED_BOT_UA =
+  /[\w-]+-Google|Google-[\w-]+|Chrome-Lighthouse|Slurp|DuckDuckBot|baiduspider|yandex|sogou|bitlybot|tumblr|vkShare|quora link preview|redditbot|ia_archiver|Bingbot|BingPreview|applebot|facebookexternalhit|facebookcatalog|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|SkypeUriPreview|Yeti|googleweblight/i;
+
+function isBotRequest(request: Request): boolean {
+  const userAgent = request.headers.get("user-agent") ?? "";
+  return (
+    HEADLESS_BROWSER_BOT_UA.test(userAgent) ||
+    HTML_LIMITED_BOT_UA.test(userAgent)
+  );
+}
+
 function searchQuery(url: URL, params: ParsedUrlQuery): ParsedUrlQuery {
   const query: ParsedUrlQuery = {};
   for (const [key, value] of url.searchParams) {
@@ -1127,7 +1141,7 @@ async function renderArtifactResponse(
     headers.set("x-nextane-revalidate", String(artifact.revalidate));
   }
   if (cacheStatus) headers.set("x-nextane-cache-status", cacheStatus);
-  return new Response(html, { status, headers });
+  return new Response(stampDeferOnExternalScripts(html), { status, headers });
 }
 
 async function renderRoute(
@@ -1411,7 +1425,11 @@ async function loadArtifact(
     if (shouldRender) {
       const pageModule = await route.load();
       const staticPath = await staticPathInfo(pageModule, params, pageUrl);
-      if (!staticPath.matched && staticPath.fallback === true) {
+      if (
+        !staticPath.matched &&
+        staticPath.fallback === true &&
+        !isBotRequest(request)
+      ) {
         if (options.loadCachedArtifact && canUseSharedArtifact) {
           const response = await options.loadCachedArtifact(
             canonicalStaticRequest(pageUrl, request, true),
@@ -1570,6 +1588,33 @@ function stripReservedRequestHeaders(request: Request): Request {
   return sanitized;
 }
 
+function buildManifestResponse(manifest: NextaneManifest): Response {
+  const sortedPages = manifest.routes
+    .filter((route) => route.kind === "page")
+    .map((route) => route.route)
+    .sort();
+  const source =
+    `self.__BUILD_MANIFEST = ${safeJson({
+      __rewrites: { afterFiles: [], beforeFiles: [], fallback: [] },
+      sortedPages,
+    })};` + `self.__BUILD_MANIFEST_CB && self.__BUILD_MANIFEST_CB();`;
+  return new Response(source, {
+    headers: {
+      "content-type": "application/javascript; charset=utf-8",
+      "cache-control": "public, max-age=31536000, immutable",
+    },
+  });
+}
+
+function stampDeferOnExternalScripts(html: string): string {
+  return html.replace(/<script\b([^>]*)>/gi, (tag, attributes: string) => {
+    if (!/\bsrc=/i.test(attributes) || /\bdefer\b/i.test(attributes)) {
+      return tag;
+    }
+    return `<script${attributes} defer>`;
+  });
+}
+
 function withPreviewResponseHeaders(
   response: Response,
   preview: PreviewState,
@@ -1634,13 +1679,39 @@ export function createNextaneHandler(
 
     try {
       if (
+        url.pathname ===
+        `/_next/static/${manifest.buildId ?? BUILD_ID}/_buildManifest.js`
+      ) {
+        return buildManifestResponse(manifest);
+      }
+      if (
+        url.pathname.startsWith("/_next/") &&
+        !url.pathname.startsWith("/_next/data/")
+      ) {
+        // Static build assets: never fall through to page routing, and
+        // answer misses with Next's plain-text 404.
+        const asset = await env.ASSETS.fetch(request);
+        if (asset.status !== 404) return asset;
+        return new Response("Not Found", {
+          status: 404,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }
+      if (
         url.pathname.startsWith("/@") ||
         url.pathname.startsWith("/src/") ||
-        url.pathname.startsWith("/node_modules/") ||
-        (/\.[a-z0-9]+$/i.test(url.pathname) &&
-          !url.pathname.startsWith("/_next/data/"))
+        url.pathname.startsWith("/node_modules/")
       ) {
         return env.ASSETS.fetch(request);
+      }
+      if (
+        /\.[a-z0-9]+$/i.test(url.pathname) &&
+        !url.pathname.startsWith("/_next/data/")
+      ) {
+        // Dotted paths are usually static files, but page routes may also
+        // contain dots (e.g. fallback slugs); miss falls through to routing.
+        const asset = await env.ASSETS.fetch(request);
+        if (asset.status !== 404) return asset;
       }
 
       if (!url.pathname.startsWith("/_next/data/")) {

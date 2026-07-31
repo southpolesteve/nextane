@@ -21,7 +21,12 @@ export const upstreamSmokeSuites = [
   },
   {
     id: "app-document-rendering",
-    testFile: "test/e2e/app-document/rendering.test.ts",
+    testFiles: [
+      "test/e2e/app-document/rendering.test.ts",
+      "test/e2e/app-document/csp.test.ts",
+      "test/e2e/app-document/index.test.ts",
+      "test/e2e/app-document/client.test.ts",
+    ],
     signatures: ["pages/_document.js", "shared-module.js"],
   },
   {
@@ -108,6 +113,47 @@ export const upstreamSmokeSuites = [
       "pages/external-linker.js",
       "pages/linker.js",
     ],
+  },
+  {
+    id: "ssr-react-context",
+    testFile: "test/e2e/ssr-react-context/index.test.ts",
+    signatures: ["context.js", "pages/consumer.js"],
+  },
+  {
+    id: "optimized-loading",
+    testFile: "test/e2e/optimized-loading/test/index.test.ts",
+    signatures: [
+      "pages/page1.js",
+      "pages/index.js",
+      "next.config.js",
+      "test/index.test.ts",
+    ],
+  },
+  {
+    id: "disable-js-preload",
+    testFile: "test/e2e/disable-js-preload/test/index.test.ts",
+    signatures: ["next.config.js", "pages/index.js", "test/index.test.ts"],
+  },
+  {
+    id: "invalid-static-asset-404-pages",
+    testFile:
+      "test/e2e/invalid-static-asset-404-pages/invalid-static-asset-404-pages.test.ts",
+    signatures: [
+      "invalid-static-asset-404-pages.test.ts",
+      "pages/404.tsx",
+      "pages/index.tsx",
+    ],
+  },
+  {
+    id: "prerender-crawler",
+    testFile: "test/e2e/prerender-crawler.test.ts",
+    signatures: ["pages/index.js", "pages/blog/[slug].js"],
+    warmupPaths: ["/blog/first"],
+  },
+  {
+    id: "streaming-ssr",
+    testFile: "test/e2e/streaming-ssr/index.test.ts",
+    signatures: ["pages/multi-byte.js", "pages/api/user/login.js"],
   },
   {
     id: "prerender",
