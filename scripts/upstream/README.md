@@ -20,7 +20,7 @@ checkout can omit `NEXTANE_NEXT_VERSION`:
 npm run test:upstream -- /absolute/path/to/next.js
 ```
 
-The 19 selected test files are:
+The 34 selected test files are:
 
 - `test/e2e/hello-world/hello-world.test.ts`
 - `test/e2e/404-page-router/index.test.ts`
@@ -40,6 +40,21 @@ The 19 selected test files are:
 - `test/e2e/error-handler-not-found-req-url/error-handler-not-found-req-url.test.ts`
 - `test/e2e/trailing-slashes/with-trailing-slash.test.ts`
 - `test/e2e/trailing-slashes/without-trailing-slash.test.ts`
+- `test/e2e/app-document/csp.test.ts`
+- `test/e2e/app-document/index.test.ts`
+- `test/e2e/app-document/client.test.ts`
+- `test/e2e/ssr-react-context/index.test.ts`
+- `test/e2e/optimized-loading/test/index.test.ts`
+- `test/e2e/disable-js-preload/test/index.test.ts`
+- `test/e2e/invalid-static-asset-404-pages/invalid-static-asset-404-pages.test.ts`
+- `test/e2e/prerender-crawler.test.ts`
+- `test/e2e/streaming-ssr/index.test.ts`
+- `test/e2e/link-with-api-rewrite/index.test.ts`
+- `test/e2e/basepath/error-pages.test.ts`
+- `test/e2e/basepath/redirect-and-rewrite.test.ts`
+- `test/e2e/basepath/router-events.test.ts`
+- `test/e2e/basepath/trailing-slash.test.ts`
+- `test/e2e/basepath/query-hash.test.ts`
 - `test/e2e/prerender.test.ts`
 
 For each isolated fixture, `adapt-fixture.mjs`:
@@ -57,33 +72,57 @@ For each isolated fixture, `adapt-fixture.mjs`:
 The prerender profile also strips an unused production-tracing-only Firebase
 import, replaces one Worker-incompatible filesystem read with Vite `?raw`,
 and warms the two large-data pages before the deploy adapter snapshots logs.
-The upstream test cases themselves remain unchanged.
+The ssr-react-context profile replaces the legacy `Context.Consumer` render
+prop with `useContext`, the streaming-ssr profile replaces one styled-jsx
+block with a plain string `style`, and the basepath profile replaces a
+`next/error` import and rewrites the event-log `_app` without its
+optional-function-parameter custom hook (octane's compiled hook calls append
+a slot sentinel that would land in that parameter). Each fixture also gets a
+`node_modules/octane` symlink so environment-aware runtime resolution applies
+instead of a static alias. The upstream test cases themselves remain
+unchanged.
+
+The upstream Next.js runner requires the Node version supported by the
+checkout (Node 20/22); set `NEXTANE_NODE_BIN` to Nextane's own Node binary so
+the fixture build and Wrangler use it while `run-tests.js` runs on the
+upstream-supported version.
 
 Unknown fixtures fail closed. The adapter builds locally and starts Wrangler;
 it never deploys or publishes anything.
 
 ## Current result
 
-Against the local Next.js `v16.2.2` baseline:
+Against the local Next.js `v16.2.2` baseline, the 34-file run produced
+**311/312 substantive upstream deploy test cases passing**:
 
-- **251/252 substantive upstream deploy test cases passed** across server
-  rendering/data, async modules, modern and legacy Link, Head, router rewrites
-  and events, `withRouter`, classic and Edge API routes, custom error handling,
-  both trailing-slash configurations, and prerendering/revalidation. The one
-  expected failure asks Nextane to mint Preview Mode cookies; Nextane fails
-  closed until those cookies can be signed and validated.
-- **6 additional deploy-mode skip sentinels passed but are excluded from the
-  substantive denominator**:
-  - `404-page-router`: five `should skip for deploy` cases;
-  - `api-resolver-query-writeable`: one `should skip next deploy` case.
-- **2 production-only routes-manifest assertions are skipped** in deploy mode.
+- original rendering/data/link/head/router/API/trailing-slash baseline: 189/189;
+- prerendering, `getStaticPaths` fallback modes, page-data caching, ISR,
+  on-demand revalidation, and Preview Mode cookies: 63/63 (the previously
+  expected Preview Mode failure now passes with signed preview cookies);
+- the additional `_app`/`_document` files (CSP hash/nonce documents and log
+  hygiene): 3/3;
+- SSR React context: 2/2; script loading (`optimized-loading`,
+  `disable-js-preload`): 8/8; invalid static asset 404s: 3/3; crawler-aware
+  fallback prerendering: 3/3; streaming SSR: 5/5; `has`-conditional rewrites
+  to API routes: 2/2;
+- `basePath` (error pages, redirects/rewrites, router events, trailing
+  slash, query/hash): 33/34. The one failure, `should rewrite without
+  basePath when set to false`, server-proxies `https://example.vercel.sh`;
+  this sandbox's egress policy answers 403 for that host, so the case cannot
+  pass here. The proxy implementation itself is exercised by unit tests.
+- **7 deploy-mode skip sentinels passed and are reported separately**: five
+  from `404-page-router`, one from `api-resolver-query-writeable`, and one
+  from `app-document/client`.
+- **3 pending tests**: two production-only routes-manifest assertions and one
+  upstream `it.skip` in `basepath/error-pages`.
 
-The full runner therefore has 257 passing test cases, one expected failure, and
-two pending tests, but **257 must not be described as substantive compatibility
-coverage**. The honest smoke result is 251/252 with six sentinels, one expected
-Preview Mode failure, and two production-only skips reported separately.
-Nextane's own upstream conformance test covers writable API `req.query` because
-that upstream suite skips deploy mode.
+The runner therefore reports 318 passing test cases, one environment-limited
+failure, and three pending tests, but **318 must not be described as
+substantive compatibility coverage**. The honest result is 311/312
+substantive cases in this environment, with the sentinels, the egress-limited
+external-rewrite case, and the skips reported separately.
+Nextane's own upstream conformance test covers writable API `req.query`
+because that upstream suite skips deploy mode.
 
 Run the harness unit/conformance tests with:
 

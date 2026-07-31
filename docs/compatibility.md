@@ -14,6 +14,9 @@ larger Next.js Pages Router compatibility claim.
 | Client runtime | Working slice | modern and legacy `Link`, URL objects, singleton router, `useRouter`, `withRouter`, push/replace/back, route events |
 | Head | Working slice | title/head output across SSR and soft navigation |
 | API routes | Working slice | classic callbacks plus Edge/Web `Request`/`Response`; method, URL, headers, query, cookies, parsed body, a 1 MiB default body limit with `config.api.bodyParser` controls, status, JSON, send, redirect |
+| Preview Mode | Working slice | signed `__prerender_bypass`/`__next_preview_data` cookies (AES-256-GCM + HMAC-SHA256, per-build server-only keys), `setPreviewData`/`clearPreviewData`/`setDraftMode`, preview context in `getStaticProps`/`getServerSideProps`, per-request preview renders that bypass the shared ISR path, stale-cookie clearing |
+| Routing config | Working slice | `redirects()`/`headers()`/`rewrites()` with `has`/`missing` conditions, `:param(pattern)` sources, case-insensitive matching, external rewrite proxying, `basePath: false` variants |
+| basePath | Working slice | prefixed pages/assets/data routes, outside-prefix 404s, prefixed router events and history, `router.basePath`, Link prefixing, trailing-slash interplay |
 | Page data | Working slice | `/_next/data/:buildId/*.json` for static and server props |
 | ISR | Working slice | shared render artifact, numeric revalidation, Workers Cache SWR |
 | URL policy | Working slice | `trailingSlash` redirects, SSR links, client navigation, dotted paths, and query strings |
@@ -25,11 +28,7 @@ larger Next.js Pages Router compatibility claim.
   fallback routes are generated through the shared runtime artifact cache
 - broader Node `IncomingMessage`/`ServerResponse` compatibility beyond the
   exercised Pages data and API surfaces
-- Preview and Draft Mode. `setPreviewData()` fails closed because Nextane does
-  not yet have the signing and validation needed to issue secure preview
-  cookies
-- the broader redirects/rewrites matrix, middleware, headers config, locales,
-  and `basePath`
+- middleware, locales/i18n, and `assetPrefix`
 - `next/image`, `next/script`, `next/font`, and other framework components
 - exact shallow-routing semantics and scroll restoration
 - advanced API behavior such as response-size warnings, streaming, and external
@@ -41,9 +40,10 @@ larger Next.js Pages Router compatibility claim.
 
 The prototype-owned suite currently has:
 
-- **56/56 unit and security tests** covering route discovery/matching, classic
+- **70/70 unit and security tests** covering route discovery/matching, classic
   and Edge API request/response adaptation, URL normalization, cache isolation,
-  and the expanded Pages server contract;
+  Preview Mode signing and bypass semantics, redirects/headers/conditional
+  rewrites, basePath routing, and the expanded Pages server contract;
 - **6/6 browser flows locally** covering SSR, hydration, state, duplicate-free
   links, soft navigation, browser back, dynamic params, API routes, custom
   404s, shared ISR artifacts, and public security boundaries; and
@@ -60,10 +60,10 @@ class components or Worker filesystem assumptions require migration, builds
 with Vite, and runs the result locally in Wrangler. The original upstream test
 cases are not rewritten.
 
-Against the local Next.js `v16.2.2` baseline, the current 19-file run
+Against the local Next.js `v16.2.2` baseline, the current 34-file run
 produced:
 
-- **251/252 substantive upstream deploy test cases passed**:
+- **311/312 substantive upstream deploy test cases passed**:
   - original rendering/data baseline: 69/69;
   - async modules: 7/7;
   - Edge Pages support: 8/8;
@@ -77,42 +77,35 @@ produced:
   - custom error `req.url`: 1/1;
   - trailing-slash behavior, enabled and disabled: 68/68;
   - prerendering, `getStaticPaths` fallback modes, page-data caching, ISR,
-    and on-demand revalidation: 62/63. The one failure expects Next.js Preview
-    Mode cookies, which Nextane now refuses to issue without secure signing and
-    validation.
-- **6 deploy-mode skip sentinels passed and are reported separately**:
-  five from `404-page-router` and one from
-  `api-resolver-query-writeable`.
-- **2 production-only routes-manifest assertions were skipped** because this
-  harness runs the upstream suites in deploy mode.
+    on-demand revalidation, and Preview Mode cookies: 63/63 (the previously
+    expected Preview Mode failure now passes with signed preview cookies);
+  - `_app`/`_document` CSP hash/nonce documents and log hygiene: 3/3;
+  - SSR React context: 2/2;
+  - script loading (`optimized-loading`, `disable-js-preload`): 8/8;
+  - invalid static asset 404s: 3/3;
+  - crawler-aware fallback prerendering: 3/3;
+  - streaming SSR (edge pages, styled output, multi-byte, API specificity):
+    5/5;
+  - `has`-conditional rewrites into API routes: 2/2;
+  - `basePath` (error pages, redirects/rewrites, router events, trailing
+    slash, query/hash handling): 33/34. The one failure server-proxies
+    `https://example.vercel.sh`; the development sandbox's egress policy
+    answers 403 for that host, so the case cannot pass in this environment.
+    The external-rewrite proxy itself is covered by prototype tests.
+- **7 deploy-mode skip sentinels passed and are reported separately**:
+  five from `404-page-router`, one from `api-resolver-query-writeable`, and
+  one from `app-document/client`.
+- **3 pending tests**: two production-only routes-manifest assertions and one
+  upstream `it.skip` in `basepath/error-pages`.
 
-The upstream runner therefore has 257 passing cases in total, but the six
-sentinels do not exercise their suites' behavior. The compatibility result is
-**251/252 substantive test cases, plus six deploy-mode sentinels, one expected
-Preview Mode failure, and two production-only skips**—not 257 substantive test
-cases.
+The upstream runner therefore reports 318 passing cases in total, but the
+seven sentinels do not exercise their suites' behavior. The compatibility
+result is **311/312 substantive test cases, plus seven deploy-mode sentinels,
+one environment-limited external-rewrite failure, and three skips** — not 318
+substantive test cases.
 
-The selected files are:
-
-1. `test/e2e/hello-world/hello-world.test.ts`
-2. `test/e2e/404-page-router/index.test.ts`
-3. `test/e2e/dynamic-route-interpolation/index.test.ts`
-4. `test/e2e/getserversideprops/test/index.test.ts`
-5. `test/e2e/app-document/rendering.test.ts`
-6. `test/e2e/api-resolver-query-writeable/api-resolver-query-writeable.test.ts`
-7. `test/e2e/async-modules/index.test.ts`
-8. `test/e2e/edge-pages-support/index.test.ts`
-9. `test/e2e/new-link-behavior/index.test.ts`
-10. `test/e2e/next-head/index.test.ts`
-11. `test/e2e/with-router/index.test.ts`
-12. `test/e2e/use-router-with-rewrites/use-router-with-rewrites.test.ts`
-13. `test/e2e/legacy-link-behavior-pages/index.test.ts`
-14. `test/e2e/edge-api-endpoints-can-receive-body/index.test.ts`
-15. `test/e2e/edge-runtime-pages-api-route/edge-runtime-pages-api-route.test.ts`
-16. `test/e2e/error-handler-not-found-req-url/error-handler-not-found-req-url.test.ts`
-17. `test/e2e/trailing-slashes/with-trailing-slash.test.ts`
-18. `test/e2e/trailing-slashes/without-trailing-slash.test.ts`
-19. `test/e2e/prerender.test.ts`
+The selected files are the 34 listed in
+[`scripts/upstream/README.md`](../scripts/upstream/README.md).
 
 Run the exact filtered harness with a prepared v16.2.2 checkout:
 
@@ -133,8 +126,8 @@ with the denominator defined as `passed + failed` and skips reported
 separately. Suite selection should use Vinext's router classifier; a
 path-based `--filter pages` is not equivalent.
 
-The next high-value batches are `basePath`, the broader redirects/rewrites
-matrix, and framework components such as `next/image`.
+The next high-value batches are i18n/locales, `assetPrefix`, and framework
+components such as `next/image`.
 
 Nightly infrastructure can be adapted from Vinext's MIT-licensed deploy suite,
 but Nextane needs a deterministic checked-in source migration step. An AI

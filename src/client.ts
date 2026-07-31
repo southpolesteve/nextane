@@ -6,6 +6,7 @@ import {
 import {
   appLoader,
   basePath,
+  errorLoader,
   pageLoaders,
   routes,
 } from "virtual:nextane-client-manifest";
@@ -70,7 +71,7 @@ const initialLoader =
   (initialData.page === "/404"
     ? async () => ({ default: DefaultNotFound })
     : initialData.page === "/500" || initialData.page === "/_error"
-      ? async () => ({ default: DefaultServerError })
+      ? errorLoader ?? (async () => ({ default: DefaultServerError }))
       : undefined);
 if (!initialLoader) {
   throw new Error(`[nextane] No client page loader for ${initialData.page}`);
