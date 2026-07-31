@@ -1934,3 +1934,126 @@ describe("basePath", () => {
     expect(html).toContain('"page":"/hello"');
   });
 });
+
+describe("route rule hardening", () => {
+  it("substitutes wildcard destination params across path segments", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          redirects: [
+            { source: "/old/:path*", destination: "/new/:path*", permanent: true },
+          ],
+        },
+      }),
+    );
+    const response = await handler(
+      new Request("https://nextane.test/old/a/b/c"),
+      { ASSETS: assets },
+    );
+    expect(response.status).toBe(308);
+    expect(new URL(response.headers.get("location") ?? "").pathname).toBe(
+      "/new/a/b/c",
+    );
+  });
+
+  it("does not prepend basePath to absolute redirect destinations", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          basePath: "/docs",
+          redirects: [
+            {
+              source: "/go",
+              destination: "https://nextane.test/landing",
+              permanent: false,
+            },
+          ],
+        },
+      }),
+    );
+    const response = await handler(
+      new Request("https://nextane.test/docs/go"),
+      { ASSETS: assets },
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://nextane.test/landing",
+    );
+  });
+
+  it("strips control characters from configured header values", async () => {
+    const injectionRoute = {
+      route: "/blog/[slug]",
+      regexSource: "^/blog/([^/]+)/?$",
+      params: [{ name: "slug", kind: "single" as const }],
+      id: 3,
+      kind: "page" as const,
+      async load() {
+        return { default: () => createElement("p", null, "post") };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [injectionRoute],
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          headers: [
+            {
+              source: "/blog/:slug",
+              headers: [{ key: "x-slug", value: ":slug" }],
+            },
+          ],
+        },
+      }),
+    );
+    const response = await handler(
+      new Request(
+        "https://nextane.test/blog/foo%0d%0aset-cookie:%20evil%3D1",
+      ),
+      { ASSETS: assets },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("x-slug")).not.toMatch(/[\r\n]/);
+  });
+
+  it("prefers a configured redirect over an existing static asset", async () => {
+    const staticAssets = {
+      ASSETS: {
+        async fetch(request: Request) {
+          if (new URL(request.url).pathname === "/legacy.html") {
+            return new Response("<p>old file</p>", {
+              status: 200,
+              headers: { "content-type": "text/html" },
+            });
+          }
+          return assets.fetch();
+        },
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          redirects: [
+            { source: "/legacy.html", destination: "/modern", permanent: true },
+          ],
+        },
+      }),
+    );
+    const response = await handler(
+      new Request("https://nextane.test/legacy.html"),
+      staticAssets,
+    );
+    expect(response.status).toBe(308);
+    expect(new URL(response.headers.get("location") ?? "").pathname).toBe(
+      "/modern",
+    );
+  });
+});

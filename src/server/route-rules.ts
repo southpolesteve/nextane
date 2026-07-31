@@ -233,6 +233,55 @@ export function substituteRuleParams(
   );
 }
 
+function encodePathSegments(value: string): string {
+  return value
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
+ * Substitute `:param`, `:param+`, `:param*`, and `:param?` tokens into a
+ * redirect/rewrite destination. The path portion keeps `/` separators for
+ * multi-segment captures (matching path-to-regexp's compile), while the query
+ * portion percent-encodes each value whole.
+ */
+export function substituteDestination(
+  destination: string,
+  values: Record<string, string>,
+): string {
+  const queryIndex = destination.indexOf("?");
+  const pathPart =
+    queryIndex === -1 ? destination : destination.slice(0, queryIndex);
+  const queryPart = queryIndex === -1 ? "" : destination.slice(queryIndex);
+
+  const substitutedPath = pathPart.replace(
+    /:([A-Za-z0-9_]+)[+*?]?/g,
+    (token, name: string) =>
+      name in values ? encodePathSegments(values[name]) : token,
+  );
+  const substitutedQuery = queryPart.replace(
+    /:([A-Za-z0-9_]+)[+*?]?/g,
+    (token, name: string) =>
+      name in values ? encodeURIComponent(values[name]) : token,
+  );
+  return `${substitutedPath}${substitutedQuery}`;
+}
+
+/**
+ * Drop C0/DEL control characters (including CR/LF) so substituted request data
+ * can never split or inject response headers. Printable characters, including
+ * spaces, are preserved.
+ */
+export function sanitizeHeaderValue(value: string): string {
+  let result = "";
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code >= 0x20 && code !== 0x7f) result += char;
+  }
+  return result;
+}
+
 export function consumedDestinationParams(destination: string): Set<string> {
   return new Set(
     [...destination.matchAll(/:([A-Za-z0-9_]+)/g)].map((match) => match[1]),
@@ -252,7 +301,7 @@ export function matchRedirectRule(
   rules: RedirectRule[],
   pathname: string,
   context: RuleRequestContext,
-): { rule: RedirectRule; location: URL } | null {
+): { rule: RedirectRule; location: URL; internal: boolean } | null {
   for (const rule of rules) {
     const values = matchRuleSource(rule.source, pathname);
     if (!values) continue;
@@ -261,13 +310,14 @@ export function matchRedirectRule(
     const merged = { ...values, ...captured };
 
     const external = isExternalDestination(rule.destination);
-    const destination = substituteRuleParams(
-      rule.destination,
-      merged,
-      external ? (value) => value : encodeURIComponent,
-    );
+    const destination = external
+      ? substituteRuleParams(rule.destination, merged, encodeURIComponent)
+      : substituteDestination(rule.destination, merged);
+    // Only path-relative destinations are basePath-prefixable; absolute
+    // destinations (even same-origin ones) are used verbatim.
+    const internal = !external && destination.startsWith("/");
     const location = new URL(destination, context.url);
-    if (!external) {
+    if (internal) {
       // Preserve the incoming query; destination-set parameters win.
       for (const [name, value] of context.url.searchParams) {
         if (!location.searchParams.has(name)) {
@@ -275,7 +325,7 @@ export function matchRedirectRule(
         }
       }
     }
-    return { rule, location };
+    return { rule, location, internal };
   }
   return null;
 }
@@ -294,8 +344,12 @@ export function matchHeaderRules(
     const merged = { ...values, ...captured };
     for (const header of rule.headers) {
       applied.push({
-        key: substituteRuleParams(header.key, merged, (value) => value),
-        value: substituteRuleParams(header.value, merged, (value) => value),
+        key: sanitizeHeaderValue(
+          substituteRuleParams(header.key, merged, (value) => value),
+        ),
+        value: sanitizeHeaderValue(
+          substituteRuleParams(header.value, merged, (value) => value),
+        ),
       });
     }
   }

@@ -139,11 +139,11 @@ function dataUrl(url: URL, buildId: string): string {
 
 async function loadNavigation(url: URL) {
   if ((url.pathname.replace(/\/+$/, "") || "/") === "/_error") {
-    // Next exposes /_error as a pushable route that renders the 404/error
+    // Next exposes /_error as a pushable route that renders the app's error
     // page client-side while the browser URL keeps the masked asPath.
-    const notFoundLoader = pageLoaders["/404"];
-    const pageModule = (notFoundLoader
-      ? await notFoundLoader()
+    const loader = errorLoader ?? pageLoaders["/404"];
+    const pageModule = (loader
+      ? await loader()
       : { default: DefaultNotFound }) as unknown as PageModule;
     return {
       match: {
@@ -261,6 +261,8 @@ async function navigate(
     url.search === window.location.search
   ) {
     if (url.hash) {
+      // A hash change supersedes any in-flight route change.
+      cancelActiveNavigation();
       const state = {
         url: `${sourceUrl.pathname}${sourceUrl.search}${url.hash}`,
         as: `${url.pathname}${url.search}${url.hash}`,
@@ -368,8 +370,13 @@ async function navigate(
     Router.events.emit("routeChangeComplete", eventUrl, { shallow });
     return true;
   } catch (error) {
+    if (navigation.cancelled) return false;
     if (activeNavigation === navigation) activeNavigation = null;
     Router.events.emit("routeChangeError", error, eventUrl, { shallow });
+    if (hardReloadOnFailure) {
+      window.location.assign(browserUrl.href);
+      return false;
+    }
     throw error;
   }
 }
