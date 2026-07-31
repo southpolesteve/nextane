@@ -112,6 +112,34 @@ describe("upstream fixture adaptation", () => {
     expect(html).toContain('<div id="__next"></div>');
   });
 
+  it("applies the basepath overlays and next/error replacement", async () => {
+    const root = await fixture({
+      "pages/invalid-manual-basepath.js":
+        "export default () => <a id=\"other-page-link\">x</a>\n",
+      "pages/absolute-url-basepath.js": "export default () => <p>a</p>\n",
+      "pages/external-and-back.js": "export default () => <p>b</p>\n",
+      "pages/404.js":
+        "import NextError from 'next/error'\nexport default () => <NextError statusCode={404} />\n",
+      "pages/_app.js":
+        "export default function App({ Component, pageProps }) { return <Component {...pageProps} /> }\n",
+    });
+
+    const report = await adaptFixture({ root, nextaneRoot });
+
+    expect(report.profile).toBe("basepath");
+    expect(report.overlays).toEqual(["pages/404.tsrx", "pages/_app.tsrx"]);
+    expect(report.warmupPaths).toEqual(["/docs"]);
+    const notFound = await fs.readFile(
+      path.join(root, "pages", "404.tsrx"),
+      "utf8",
+    );
+    expect(notFound).toContain("This page could not be found.");
+    expect(notFound).not.toContain("from 'next/error'");
+    const app = await fs.readFile(path.join(root, "pages", "_app.tsrx"), "utf8");
+    expect(app).toContain("routeChangeError");
+    expect(app).toContain("router.events");
+  });
+
   it("fails closed for a fixture outside the smoke allowlist", async () => {
     const root = await fixture({
       "pages/index.js": "export default () => <p>unknown</p>\n",

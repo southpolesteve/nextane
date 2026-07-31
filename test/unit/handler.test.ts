@@ -1817,3 +1817,120 @@ describe("next.config route rules", () => {
     expect(flagged.headers.get("x-conditional")).toBe("yes");
   });
 });
+
+describe("basePath", () => {
+  const helloRoute = {
+    route: "/hello",
+    regexSource: "^/hello/?$",
+    params: [],
+    id: 0,
+    kind: "page" as const,
+    async load() {
+      return {
+        default: () => createElement("h1", null, "Hello World"),
+      };
+    },
+  };
+
+  function basePathManifest(extra: Record<string, unknown> = {}) {
+    return manifest({
+      routes: [helloRoute],
+      loadApp: null,
+      loadDocument: null,
+      config: { basePath: "/docs", ...extra },
+    });
+  }
+
+  it("serves pages under the basePath and 404s outside it", async () => {
+    const handler = createNextaneHandler(basePathManifest());
+    const inside = await handler(
+      new Request("https://nextane.test/docs/hello"),
+      { ASSETS: assets },
+    );
+    expect(inside.status).toBe(200);
+    expect(await inside.text()).toContain("Hello World");
+
+    const outside = await handler(new Request("https://nextane.test/hello"), {
+      ASSETS: assets,
+    });
+    expect(outside.status).toBe(404);
+    expect(await outside.text()).not.toContain("Hello World");
+
+    const bare = await handler(new Request("https://nextane.test/docs"), {
+      ASSETS: assets,
+    });
+    expect(bare.status).toBe(404);
+  });
+
+  it("prefixes trailing-slash canonicalization and redirect rules", async () => {
+    const handler = createNextaneHandler(
+      basePathManifest({
+        trailingSlash: true,
+        redirects: [
+          {
+            source: "/redirect-1",
+            destination: "/somewhere-else",
+            permanent: false,
+          },
+          {
+            source: "/redirect-no-basepath",
+            destination: "/another-destination",
+            permanent: false,
+            basePath: false,
+          },
+        ],
+      }),
+    );
+
+    const canonical = await handler(
+      new Request("https://nextane.test/docs/hello"),
+      { ASSETS: assets },
+    );
+    expect(canonical.status).toBe(308);
+    expect(new URL(canonical.headers.get("location") ?? "").pathname).toBe(
+      "/docs/hello/",
+    );
+
+    const redirected = await handler(
+      new Request("https://nextane.test/docs/redirect-1"),
+      { ASSETS: assets },
+    );
+    expect(redirected.status).toBe(307);
+    expect(new URL(redirected.headers.get("location") ?? "").pathname).toBe(
+      "/docs/somewhere-else",
+    );
+
+    const insideOnly = await handler(
+      new Request("https://nextane.test/redirect-1"),
+      { ASSETS: assets },
+    );
+    expect(insideOnly.status).toBe(404);
+
+    const outsideRule = await handler(
+      new Request("https://nextane.test/redirect-no-basepath"),
+      { ASSETS: assets },
+    );
+    expect(outsideRule.status).toBe(307);
+    expect(new URL(outsideRule.headers.get("location") ?? "").pathname).toBe(
+      "/another-destination",
+    );
+  });
+
+  it("serves basePath-prefixed data routes and reports router.basePath", async () => {
+    const handler = createNextaneHandler(basePathManifest());
+    const data = await handler(
+      new Request(
+        "https://nextane.test/docs/_next/data/development/hello.json",
+      ),
+      { ASSETS: assets },
+    );
+    expect(data.status).toBe(200);
+
+    const page = await handler(
+      new Request("https://nextane.test/docs/hello"),
+      { ASSETS: assets },
+    );
+    const html = await page.text();
+    expect(html).toContain('"page":"/hello"');
+  });
+});

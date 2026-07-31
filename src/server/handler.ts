@@ -7,6 +7,11 @@ import {
 import {
   runWithServerRouterState,
 } from "../runtime/router-server";
+import {
+  addBasePath,
+  hasBasePath,
+  stripBasePath,
+} from "../runtime/navigation";
 import { matchRoute } from "../routing/match";
 import type { ClientRoute } from "../routing/types";
 import type {
@@ -72,6 +77,7 @@ export interface NextaneManifest {
     headers?: HeaderRule[];
     crossOrigin?: string;
     trailingSlash?: boolean;
+    basePath?: string;
   };
   preview?: PreviewCredentials;
 }
@@ -185,14 +191,15 @@ interface RewriteResolution {
   displayUrl: URL;
   resolvedUrl: URL;
   external?: URL;
+  matched: boolean;
 }
 
 function resolveRewrite(
-  manifest: NextaneManifest,
+  rewrites: RewriteRule[],
   requestUrl: URL,
   context: RuleRequestContext,
 ): RewriteResolution {
-  for (const rewrite of manifest.config?.rewrites ?? []) {
+  for (const rewrite of rewrites) {
     const values = matchRuleSource(rewrite.source, requestUrl.pathname);
     if (!values) continue;
     const captured = evaluateRuleConditions(rewrite, context);
@@ -211,6 +218,7 @@ function resolveRewrite(
         displayUrl: requestUrl,
         resolvedUrl: requestUrl,
         external: externalUrl,
+        matched: true,
       };
     }
 
@@ -238,13 +246,26 @@ function resolveRewrite(
       pageUrl,
       displayUrl: requestUrl,
       resolvedUrl,
+      matched: true,
     };
   }
   return {
     pageUrl: requestUrl,
     displayUrl: requestUrl,
     resolvedUrl: requestUrl,
+    matched: false,
   };
+}
+
+function rulesForRequest<Rule extends { basePath?: false }>(
+  rules: Rule[] | undefined,
+  basePath: string,
+  hadBasePath: boolean,
+): Rule[] {
+  if (!basePath) return rules ?? [];
+  return (rules ?? []).filter((rule) =>
+    rule.basePath === false ? !hadBasePath : hadBasePath,
+  );
 }
 
 const HOP_BY_HOP_HEADERS = [
@@ -897,7 +918,7 @@ async function createRenderArtifact(
     pathname: route.route,
     query,
     asPath: `${displayUrl.pathname}${displayUrl.search}`,
-    basePath: "",
+    basePath: manifest.config?.basePath ?? "",
     isReady: true,
     isPreview: preview.enabled,
     isFallback: fallbackShell,
@@ -1700,11 +1721,13 @@ export function createNextaneHandler(
     validateRuleSource(header.source, "header");
   }
   const previewCredentials = previewCredentialsFor(manifest);
+  const basePath = manifest.config?.basePath ?? "";
 
   const handleRequest = async function handleRequest(
     request: Request,
     env: NextaneEnvironment,
     previewState: PreviewState,
+    hadBasePath: boolean,
   ): Promise<Response> {
     const url = new URL(request.url);
 
@@ -1745,18 +1768,6 @@ export function createNextaneHandler(
         if (asset.status !== 404) return asset;
       }
 
-      if (!url.pathname.startsWith("/_next/data/")) {
-        const canonical = canonicalPathname(
-          url.pathname,
-          manifest.config?.trailingSlash === true,
-        );
-        if (canonical !== url.pathname) {
-          const location = new URL(request.url);
-          location.pathname = canonical;
-          return Response.redirect(location, 308);
-        }
-      }
-
       const ruleContext: RuleRequestContext = {
         url,
         headers: request.headers,
@@ -1764,11 +1775,20 @@ export function createNextaneHandler(
       };
       if (!url.pathname.startsWith("/_next/")) {
         const redirected = matchRedirectRule(
-          manifest.config?.redirects ?? [],
+          rulesForRequest(manifest.config?.redirects, basePath, hadBasePath),
           url.pathname,
           ruleContext,
         );
         if (redirected) {
+          if (
+            redirected.rule.basePath !== false &&
+            redirected.location.origin === url.origin
+          ) {
+            redirected.location.pathname = addBasePath(
+              redirected.location.pathname,
+              basePath,
+            );
+          }
           return new Response(null, {
             status: redirectStatusFor(redirected.rule),
             headers: {
@@ -1777,6 +1797,36 @@ export function createNextaneHandler(
             },
           });
         }
+      }
+
+      if (hadBasePath && !url.pathname.startsWith("/_next/data/")) {
+        const canonical = canonicalPathname(
+          url.pathname,
+          manifest.config?.trailingSlash === true,
+        );
+        if (canonical !== url.pathname) {
+          const location = new URL(request.url);
+          location.pathname = addBasePath(canonical, basePath);
+          return Response.redirect(location, 308);
+        }
+      }
+
+      let presetRouting: RewriteResolution | null = null;
+      if (basePath && !hadBasePath) {
+        // Requests outside the basePath are only reachable through
+        // basePath:false rewrites; everything else is not found.
+        const routing = resolveRewrite(
+          rulesForRequest(manifest.config?.rewrites, basePath, false),
+          url,
+          ruleContext,
+        );
+        if (routing.external) {
+          return proxyExternalRewrite(request, routing.external);
+        }
+        if (!routing.matched) {
+          return renderNotFound(manifest, request, env);
+        }
+        presetRouting = routing;
       }
 
       const isDataRequest = url.pathname.startsWith("/_next/data/");
@@ -1874,7 +1924,13 @@ export function createNextaneHandler(
         );
       }
 
-      const routing = resolveRewrite(manifest, url, ruleContext);
+      const routing =
+        presetRouting ??
+        resolveRewrite(
+          rulesForRequest(manifest.config?.rewrites, basePath, hadBasePath),
+          url,
+          ruleContext,
+        );
       if (routing.external) {
         return proxyExternalRewrite(request, routing.external);
       }
@@ -1954,12 +2010,36 @@ export function createNextaneHandler(
     request: Request,
     env: NextaneEnvironment,
   ): Promise<Response> {
-    const sanitized = stripReservedRequestHeaders(request);
+    let sanitized = stripReservedRequestHeaders(request);
+    const requestPathname = new URL(sanitized.url).pathname;
+    const hadBasePath =
+      basePath === "" || hasBasePath(requestPathname, basePath);
+    if (basePath && hadBasePath) {
+      const strippedUrl = new URL(sanitized.url);
+      strippedUrl.pathname = stripBasePath(requestPathname, basePath);
+      const stripped = new Request(strippedUrl, sanitized);
+      if ("cf" in sanitized) {
+        Object.defineProperty(stripped, "cf", {
+          value: (sanitized as Request & { cf?: unknown }).cf,
+          configurable: true,
+        });
+      }
+      sanitized = stripped;
+    }
     const cookies = parseCookies(sanitized.headers.get("cookie"));
     const previewState = resolvePreviewState(cookies, previewCredentials);
-    let response = await handleRequest(sanitized, env, previewState);
+    let response = await handleRequest(
+      sanitized,
+      env,
+      previewState,
+      hadBasePath,
+    );
 
-    const headerRules = manifest.config?.headers ?? [];
+    const headerRules = rulesForRequest(
+      manifest.config?.headers,
+      basePath,
+      hadBasePath,
+    );
     if (headerRules.length > 0 && response.status !== 101) {
       const url = new URL(sanitized.url);
       const applied = matchHeaderRules(headerRules, url.pathname, {

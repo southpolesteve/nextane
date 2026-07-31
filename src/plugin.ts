@@ -55,6 +55,22 @@ interface RoutingConfig {
   headers: HeaderRule[];
   crossOrigin?: string;
   trailingSlash: boolean;
+  basePath: string;
+}
+
+function validatedBasePath(value: unknown): string {
+  if (value === undefined || value === "") return "";
+  if (
+    typeof value !== "string" ||
+    !value.startsWith("/") ||
+    value === "/" ||
+    value.endsWith("/")
+  ) {
+    throw new Error(
+      `[nextane] basePath must start with a slash and must not end with one, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
 }
 
 const UNSUPPORTED_ROUTING_FILE_NAMES = ["middleware", "proxy"];
@@ -536,7 +552,13 @@ export async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
     .map((candidate) => path.join(root, candidate))
     .find(existsSync);
   if (!configPath) {
-    return { rewrites: [], redirects: [], headers: [], trailingSlash: false };
+    return {
+      rewrites: [],
+      redirects: [],
+      headers: [],
+      trailingSlash: false,
+      basePath: "",
+    };
   }
 
   let loaded: unknown;
@@ -621,6 +643,7 @@ export async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
     redirects,
     headers,
     trailingSlash: config.trailingSlash === true,
+    basePath: validatedBasePath(config.basePath),
     ...(typeof config.crossOrigin === "string"
       ? { crossOrigin: config.crossOrigin }
       : {}),
@@ -776,6 +799,7 @@ async function clientManifestSource(root: string): Promise<string> {
   const routes = (await scanPages(root)).filter((route) => route.kind === "page");
   const appPath = await findSpecialPage(root, "_app");
   const errorPath = await findSpecialPage(root, "_error");
+  const routingConfig = await loadRoutingConfig(root);
 
   const loaderEntries = routes.map(
     (route) =>
@@ -795,6 +819,7 @@ export const errorLoader = ${
       ? `() => import(${javascriptStringLiteral(clientPageFileId(errorPath))})`
       : "null"
   };
+export const basePath = ${javascriptStringLiteral(routingConfig.basePath)};
 `;
 }
 
@@ -891,8 +916,13 @@ export function nextane(): Plugin {
   return {
     name: "nextane",
     enforce: "pre",
-    config() {
+    async config(userConfig) {
+      const root = path.resolve(userConfig.root ?? process.cwd());
+      const routingConfig = await loadRoutingConfig(root);
       return {
+        ...(routingConfig.basePath
+          ? { base: `${routingConfig.basePath}/` }
+          : {}),
         resolve: {
           alias: PUBLIC_RUNTIME_ALIASES,
         },

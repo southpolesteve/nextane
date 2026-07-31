@@ -6,7 +6,7 @@ import {
   useEffect,
 } from "octane";
 import Router, { formatRouterHref } from "./router";
-import { isSafeClientNavigationTarget } from "./navigation";
+import { addBasePath, isSafeClientNavigationTarget } from "./navigation";
 import type { UrlObject } from "../types";
 
 export interface LinkProps {
@@ -44,7 +44,9 @@ export default function Link(props: LinkProps) {
   const safeDestination =
     isSafeClientNavigationTarget(resolvedHref) &&
     isSafeClientNavigationTarget(destination);
-  const anchorHref = safeDestination ? destination : "#";
+  const anchorHref = safeDestination
+    ? addBasePath(destination, Router.basePath)
+    : "#";
   const shouldPrefetch =
     _prefetch === true || (as !== undefined && dataHref !== destination);
   const userOnClick = anchorProps.onClick;

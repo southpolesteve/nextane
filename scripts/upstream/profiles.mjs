@@ -161,6 +161,22 @@ export const upstreamSmokeSuites = [
     signatures: ["pages/api/json.js", "pages/index.js"],
   },
   {
+    id: "basepath",
+    testFiles: [
+      "test/e2e/basepath/error-pages.test.ts",
+      "test/e2e/basepath/redirect-and-rewrite.test.ts",
+      "test/e2e/basepath/router-events.test.ts",
+      "test/e2e/basepath/trailing-slash.test.ts",
+      "test/e2e/basepath/query-hash.test.ts",
+    ],
+    signatures: [
+      "pages/invalid-manual-basepath.js",
+      "pages/absolute-url-basepath.js",
+      "pages/external-and-back.js",
+    ],
+    warmupPaths: ["/docs"],
+  },
+  {
     id: "prerender",
     testFile: "test/e2e/prerender.test.ts",
     signatures: [

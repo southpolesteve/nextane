@@ -14,6 +14,7 @@ declare module "virtual:nextane-client-manifest" {
   export const pageLoaders: Record<string, () => Promise<Record<string, unknown>>>;
   export const appLoader: null | (() => Promise<Record<string, unknown>>);
   export const errorLoader: null | (() => Promise<Record<string, unknown>>);
+  export const basePath: string;
 }
 
 declare module "virtual:nextane-server-manifest" {
@@ -61,6 +62,7 @@ declare module "virtual:nextane-server-manifest" {
     >;
     crossOrigin?: string;
     trailingSlash?: boolean;
+    basePath?: string;
   };
   export const preview: {
     previewModeId: string;
