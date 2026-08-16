@@ -9,6 +9,7 @@ export interface LinkProps {
   prefetch?: boolean;
   legacyBehavior?: boolean;
   passHref?: boolean;
+  locale?: string | false;
   target?: string;
   className?: string;
   id?: string;

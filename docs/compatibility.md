@@ -11,7 +11,7 @@ larger Next.js Pages Router compatibility claim.
 | Rendering | Working | Octane server render, hydration, client state |
 | Data functions | Working slice | `getStaticProps`, `getServerSideProps`, `getStaticPaths`, and page `getInitialProps` |
 | Special pages | Working slice | `_app` and `_app.getInitialProps`, `_document` and `renderPage` enhancement, `_error`, `404`, and `500` |
-| Client runtime | Working slice | modern and legacy `Link`, URL objects, singleton router, `useRouter`, `withRouter`, push/replace/back, route events |
+| Client runtime | Working slice | modern and legacy `Link` (including the i18n `locale` prop), URL objects, singleton router, `useRouter`, `withRouter`, push/replace/back, route events |
 | Head | Working slice | title/head output across SSR and soft navigation |
 | API routes | Working slice | classic callbacks plus Edge/Web `Request`/`Response`; method, URL, headers, query, cookies, parsed body, a 1 MiB default body limit with `config.api.bodyParser` controls, status, JSON, send, redirect |
 | Preview Mode | Working slice | signed `__prerender_bypass`/`__next_preview_data` cookies (AES-256-GCM + HMAC-SHA256, per-build server-only keys), `setPreviewData`/`clearPreviewData`/`setDraftMode`, preview context in `getStaticProps`/`getServerSideProps`, per-request preview renders that bypass the shared ISR path, stale-cookie clearing |
@@ -64,10 +64,10 @@ class components or Worker filesystem assumptions require migration, builds
 with Vite, and runs the result locally in Wrangler. The original upstream test
 cases are not rewritten.
 
-Against the local Next.js `v16.2.2` baseline, the current 41-file run
+Against the local Next.js `v16.2.2` baseline, the current 42-file run
 produced:
 
-- **370/371 substantive upstream deploy test cases passed**:
+- **372/373 substantive upstream deploy test cases passed**:
   - original rendering/data baseline: 69/69;
   - async modules: 7/7;
   - Edge Pages support: 8/8;
@@ -96,7 +96,7 @@ produced:
     `i18n-ignore-rewrite-source-locale` 8/8, `i18n-fallback-collision`
     11/11, and `i18n-ignore-redirect-source-locale` — `locale:false`
     redirects with the destination locale reflected in `router.locale`,
-    plain and under `basePath` — 32/32): 53/53;
+    plain and under `basePath` — 32/32, and `i18n-default-locale-redirect` — the `Link` `locale` prop — 2/2): 55/55;
   - `basePath` (error pages, redirects/rewrites, router events, trailing
     slash, query/hash handling): 33/34. The one failure server-proxies
     `https://example.vercel.sh`; the development sandbox's egress policy
@@ -109,13 +109,13 @@ produced:
 - **3 pending tests**: two production-only routes-manifest assertions and one
   upstream `it.skip` in `basepath/error-pages`.
 
-The upstream runner therefore reports 382 passing cases in total, but the
+The upstream runner therefore reports 384 passing cases in total, but the
 twelve sentinels do not exercise their suites' behavior. The compatibility
-result is **370/371 substantive test cases, plus twelve deploy-mode
+result is **372/373 substantive test cases, plus twelve deploy-mode
 sentinels, one environment-limited external-rewrite failure, and three
-skips** — not 382 substantive test cases.
+skips** — not 384 substantive test cases.
 
-The selected files are the 41 listed in
+The selected files are the 42 listed in
 [`scripts/upstream/README.md`](../scripts/upstream/README.md).
 
 Run the exact filtered harness with a prepared v16.2.2 checkout:

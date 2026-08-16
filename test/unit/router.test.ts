@@ -218,3 +218,33 @@ describe("Pages Router URL and event compatibility", () => {
     expect((await first).html).toContain("<p>/first:first:true</p>");
   });
 });
+
+describe("withLocalePrefix", () => {
+  it("prefixes non-default locales and leaves the default unprefixed", async () => {
+    const { withLocalePrefix } = await import("../../src/runtime/navigation");
+    // No i18n configured (defaultLocale undefined) -> unchanged.
+    expect(withLocalePrefix("/foo", undefined, undefined, undefined)).toBe(
+      "/foo",
+    );
+    // Explicit non-default locale prop.
+    expect(withLocalePrefix("/to-new", "nl", "en", "en")).toBe("/nl/to-new");
+    // Explicit default locale stays unprefixed.
+    expect(withLocalePrefix("/to-new", "en", "en", "en")).toBe("/to-new");
+    // No prop -> current locale (non-default) prefixes.
+    expect(withLocalePrefix("/dynamic/1", undefined, "de", "default")).toBe(
+      "/de/dynamic/1",
+    );
+    // locale: false opts out.
+    expect(withLocalePrefix("/x", false, "de", "default")).toBe("/x");
+    // Root href.
+    expect(withLocalePrefix("/", "de", "default", "default")).toBe("/de");
+    // Query/hash preserved.
+    expect(withLocalePrefix("/p?a=1#h", "de", "en", "en")).toBe(
+      "/de/p?a=1#h",
+    );
+    // External/relative untouched.
+    expect(withLocalePrefix("https://x/y", "de", "en", "en")).toBe(
+      "https://x/y",
+    );
+  });
+});

@@ -208,6 +208,13 @@ export const upstreamSmokeSuites = [
     warmupPaths: ["/newpage", "/sv/newpage"],
   },
   {
+    id: "i18n-default-locale-redirect",
+    testFile:
+      "test/e2e/i18n-default-locale-redirect/i18n-default-locale-redirect.test.ts",
+    signatures: ["pages/new.js", "pages/index.js"],
+    warmupPaths: ["/", "/new"],
+  },
+  {
     id: "prerender",
     testFile: "test/e2e/prerender.test.ts",
     signatures: [

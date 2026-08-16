@@ -46,3 +46,25 @@ export function addBasePath(target: string, basePath: string): string {
   const suffix = boundary === -1 ? "" : target.slice(boundary);
   return `${pathname === "/" ? basePath : `${basePath}${pathname}`}${suffix}`;
 }
+
+/**
+ * Prefix a route-space href with `/{locale}` for i18n links. The default locale
+ * is served unprefixed, so it is left alone. Returns the href unchanged when
+ * i18n is not configured (`defaultLocale` undefined) or the target is external.
+ */
+export function withLocalePrefix(
+  target: string,
+  locale: string | false | undefined,
+  currentLocale: string | undefined,
+  defaultLocale: string | undefined,
+): string {
+  if (defaultLocale === undefined) return target;
+  if (locale === false) return target;
+  if (!target.startsWith("/")) return target;
+  const resolved = typeof locale === "string" ? locale : currentLocale;
+  if (!resolved || resolved === defaultLocale) return target;
+  const boundary = target.search(/[?#]/);
+  const pathname = boundary === -1 ? target : target.slice(0, boundary);
+  const suffix = boundary === -1 ? "" : target.slice(boundary);
+  return `${pathname === "/" ? `/${resolved}` : `/${resolved}${pathname}`}${suffix}`;
+}

@@ -6,7 +6,11 @@ import {
   useEffect,
 } from "octane";
 import Router, { formatRouterHref } from "./router";
-import { addBasePath, isSafeClientNavigationTarget } from "./navigation";
+import {
+  addBasePath,
+  isSafeClientNavigationTarget,
+  withLocalePrefix,
+} from "./navigation";
 import type { UrlObject } from "../types";
 
 export interface LinkProps {
@@ -18,6 +22,7 @@ export interface LinkProps {
   prefetch?: boolean;
   legacyBehavior?: boolean;
   passHref?: boolean;
+  locale?: string | false;
   target?: string;
   className?: string;
   id?: string;
@@ -35,11 +40,14 @@ export default function Link(props: LinkProps) {
     prefetch: _prefetch,
     legacyBehavior,
     passHref,
+    locale: localeProp,
     children,
     ...anchorProps
   } = props;
-  const resolvedHref = formatRouterHref(href);
-  const destination = as ? formatRouterHref(as) : resolvedHref;
+  const localize = (value: string) =>
+    withLocalePrefix(value, localeProp, Router.locale, Router.defaultLocale);
+  const resolvedHref = localize(formatRouterHref(href));
+  const destination = localize(as ? formatRouterHref(as) : formatRouterHref(href));
   const dataHref = resolvedHref.includes("[") ? destination : resolvedHref;
   const safeDestination =
     isSafeClientNavigationTarget(resolvedHref) &&
