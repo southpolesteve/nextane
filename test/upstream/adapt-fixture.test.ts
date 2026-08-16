@@ -140,6 +140,32 @@ describe("upstream fixture adaptation", () => {
     expect(app).toContain("router.events");
   });
 
+  it("translates the i18n-fallback-collision config to an overlay", async () => {
+    const root = await fixture({
+      "pages/index.tsx": "export default () => <p>index page</p>\n",
+      "pages/[first]/index.js":
+        "export default () => <p>/[first]</p>\nexport const getStaticProps = () => ({ props: {} })\nexport const getStaticPaths = () => ({ paths: [], fallback: false })\n",
+      "pages/[first]/[second]/index.js":
+        "export default () => <p>/[first]/[second]</p>\n",
+      "pages/[first]/[second]/[third]/index.js":
+        "export default () => <p>x</p>\n",
+      "pages/[first]/[second]/[third]/[fourth]/index.js":
+        "export default () => <p>x</p>\n",
+      "next.config.ts":
+        "export default { i18n: { defaultLocale: 'en', locales: ['en', 'es'] } }\n",
+    });
+
+    const report = await adaptFixture({ root, nextaneRoot });
+
+    expect(report.profile).toBe("i18n-fallback-collision");
+    expect(report.overlays).toEqual(["next.config.js"]);
+    const overlaid = await fs.readFile(
+      path.join(root, "next.config.js"),
+      "utf8",
+    );
+    expect(overlaid).toContain('locales: ["en", "es"]');
+  });
+
   it("fails closed for a fixture outside the smoke allowlist", async () => {
     const root = await fixture({
       "pages/index.js": "export default () => <p>unknown</p>\n",

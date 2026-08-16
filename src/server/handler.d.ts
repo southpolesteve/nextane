@@ -46,6 +46,7 @@ export interface NextaneManifest {
     crossOrigin?: string;
     trailingSlash?: boolean;
     basePath?: string;
+    assetPrefix?: string;
   };
   preview?: {
     previewModeId: string;

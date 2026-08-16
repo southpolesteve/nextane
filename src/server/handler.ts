@@ -12,6 +12,7 @@ import {
   hasBasePath,
   stripBasePath,
 } from "../runtime/navigation";
+import { addLocalePrefix, resolveLocale, type I18nConfig } from "./i18n";
 import { matchRoute } from "../routing/match";
 import type { ClientRoute } from "../routing/types";
 import type {
@@ -79,6 +80,8 @@ export interface NextaneManifest {
     crossOrigin?: string;
     trailingSlash?: boolean;
     basePath?: string;
+    assetPrefix?: string;
+    i18n?: I18nConfig | null;
   };
   preview?: PreviewCredentials;
 }
@@ -199,9 +202,15 @@ function resolveRewrite(
   rewrites: RewriteRule[],
   requestUrl: URL,
   context: RuleRequestContext,
+  localizedPathname = requestUrl.pathname,
 ): RewriteResolution {
   for (const rewrite of rewrites) {
-    const values = matchRuleSource(rewrite.source, requestUrl.pathname);
+    // `locale: false` sources keep the locale segment; match them against the
+    // locale-included path so the `:locale` param is captured.
+    const values = matchRuleSource(
+      rewrite.source,
+      rewrite.locale === false ? localizedPathname : requestUrl.pathname,
+    );
     if (!values) continue;
     const captured = evaluateRuleConditions(rewrite, context);
     if (!captured) continue;
@@ -1735,6 +1744,14 @@ export function createNextaneHandler(
   }
   const previewCredentials = previewCredentialsFor(manifest);
   const basePath = manifest.config?.basePath ?? "";
+  const i18n = manifest.config?.i18n ?? null;
+  // assetPrefix only re-homes static assets; it never affects page routing.
+  // basePath already prefixes assets, so an explicit assetPrefix stacks on top
+  // of it only when they differ.
+  const assetPrefix =
+    manifest.config?.assetPrefix && manifest.config.assetPrefix !== basePath
+      ? manifest.config.assetPrefix
+      : "";
 
   const handleRequest = async function handleRequest(
     request: Request,
@@ -1743,26 +1760,48 @@ export function createNextaneHandler(
     hadBasePath: boolean,
   ): Promise<Response> {
     const url = new URL(request.url);
+    // Assets live under the assetPrefix on the wire; map back to the plain
+    // space the ASSETS binding, buildManifest, and vite chunk paths expect.
+    const underAssetPrefix =
+      assetPrefix !== "" && url.pathname.startsWith(`${assetPrefix}/`);
+    const assetPathname = underAssetPrefix
+      ? url.pathname.slice(assetPrefix.length)
+      : url.pathname;
+    const fetchAsset = (): Promise<Response> => {
+      if (!underAssetPrefix) return env.ASSETS.fetch(request);
+      const assetUrl = new URL(request.url);
+      assetUrl.pathname = assetPathname;
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    };
 
     try {
       if (
-        url.pathname ===
+        assetPathname ===
         `/_next/static/${manifest.buildId ?? BUILD_ID}/_buildManifest.js`
       ) {
         return buildManifestResponse(manifest);
       }
       if (
-        url.pathname.startsWith("/_next/") &&
-        !url.pathname.startsWith("/_next/data/")
+        assetPathname.startsWith("/_next/") &&
+        !assetPathname.startsWith("/_next/data/")
       ) {
         // Static build assets: never fall through to page routing, and
         // answer misses with Next's plain-text 404.
-        const asset = await env.ASSETS.fetch(request);
+        const asset = await fetchAsset();
         if (asset.status !== 404) return asset;
         return new Response("Not Found", {
           status: 404,
           headers: { "content-type": "text/plain; charset=utf-8" },
         });
+      }
+      // Vite emits its hashed chunks under the assetPrefix too; strip it so
+      // the ASSETS binding (served at the site root) resolves them.
+      if (
+        underAssetPrefix &&
+        /\.[a-z0-9]+$/i.test(assetPathname) &&
+        !assetPathname.startsWith("/_next/data/")
+      ) {
+        return fetchAsset();
       }
       if (
         url.pathname.startsWith("/@") ||
@@ -1771,6 +1810,22 @@ export function createNextaneHandler(
       ) {
         return env.ASSETS.fetch(request);
       }
+
+      // i18n: split a leading locale segment off the routing path. `routingUrl`
+      // carries the locale-stripped pathname used for page matching and normal
+      // rules; `localizedPathname` re-adds the resolved locale for `locale:false`
+      // rules whose sources spell out the `:locale` segment.
+      const routingUrl = new URL(url);
+      let locale = i18n?.defaultLocale;
+      if (i18n && !url.pathname.startsWith("/_next/")) {
+        const resolution = resolveLocale(url.pathname, i18n);
+        locale = resolution.locale;
+        routingUrl.pathname = resolution.pathname;
+      }
+      const localizedPathname =
+        i18n && locale
+          ? addLocalePrefix(routingUrl.pathname, locale)
+          : routingUrl.pathname;
 
       const ruleContext: RuleRequestContext = {
         url,
@@ -1782,8 +1837,9 @@ export function createNextaneHandler(
       if (!url.pathname.startsWith("/_next/")) {
         const redirected = matchRedirectRule(
           rulesForRequest(manifest.config?.redirects, basePath, hadBasePath),
-          url.pathname,
+          routingUrl.pathname,
           ruleContext,
+          localizedPathname,
         );
         if (redirected) {
           if (redirected.internal && redirected.rule.basePath !== false) {
@@ -1824,12 +1880,28 @@ export function createNextaneHandler(
         }
       }
 
+      const activeRewrites = rulesForRequest(
+        manifest.config?.rewrites,
+        basePath,
+        hadBasePath,
+      );
+      // beforeFiles/afterFiles rewrites run before route matching; `fallback`
+      // rewrites only fire when no page/route matched (Next.js phase order).
+      const preRouteRewrites = activeRewrites.filter(
+        (rewrite) => rewrite.phase !== "fallback",
+      );
+      const fallbackRewrites = activeRewrites.filter(
+        (rewrite) => rewrite.phase === "fallback",
+      );
+
       let presetRouting: RewriteResolution | null = null;
       if (basePath && !hadBasePath) {
         // Requests outside the basePath are only reachable through
         // basePath:false rewrites; everything else is not found.
         const routing = resolveRewrite(
-          rulesForRequest(manifest.config?.rewrites, basePath, false),
+          rulesForRequest(manifest.config?.rewrites, basePath, false).filter(
+            (rewrite) => rewrite.phase !== "fallback",
+          ),
           url,
           ruleContext,
         );
@@ -1937,19 +2009,55 @@ export function createNextaneHandler(
         );
       }
 
-      const routing =
+      let routing =
         presetRouting ??
         resolveRewrite(
-          rulesForRequest(manifest.config?.rewrites, basePath, hadBasePath),
-          url,
+          preRouteRewrites,
+          routingUrl,
           ruleContext,
+          localizedPathname,
         );
       if (routing.external) {
         return proxyExternalRewrite(request, routing.external);
       }
-      const match = matchRoute(manifest.routes, routing.pageUrl.pathname);
+      let match = matchRoute(manifest.routes, routing.pageUrl.pathname);
       if (!match) {
-        return renderNotFound(manifest, request, env);
+        // A `beforeFiles` rewrite may target a static/public file (e.g. a
+        // locale-stripping rewrite to a public asset); serve it if present.
+        if (
+          routing.pageUrl.pathname !== url.pathname &&
+          /\.[a-z0-9]+$/i.test(routing.pageUrl.pathname)
+        ) {
+          const asset = await env.ASSETS.fetch(
+            new Request(routing.pageUrl, request),
+          );
+          if (asset.status !== 404) return asset;
+        }
+        // No route matched: try the `fallback` rewrite phase.
+        if (fallbackRewrites.length > 0) {
+          const fallback = resolveRewrite(
+            fallbackRewrites,
+            routingUrl,
+            ruleContext,
+            localizedPathname,
+          );
+          if (fallback.external) {
+            return proxyExternalRewrite(request, fallback.external);
+          }
+          if (fallback.matched) {
+            const fallbackMatch = matchRoute(
+              manifest.routes,
+              fallback.pageUrl.pathname,
+            );
+            if (fallbackMatch) {
+              match = fallbackMatch;
+              routing = fallback;
+            }
+          }
+        }
+        if (!match) {
+          return renderNotFound(manifest, request, env);
+        }
       }
 
       if (match.route.kind === "api") {

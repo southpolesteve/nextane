@@ -18,6 +18,7 @@ import {
   type RewriteRule,
   type RouteHas,
 } from "./server/route-rules.ts";
+import { normalizeI18nConfig, type I18nConfig } from "./server/i18n.ts";
 
 const CLIENT_MANIFEST_ID = "virtual:nextane-client-manifest";
 const SERVER_MANIFEST_ID = "virtual:nextane-server-manifest";
@@ -56,6 +57,21 @@ interface RoutingConfig {
   crossOrigin?: string;
   trailingSlash: boolean;
   basePath: string;
+  assetPrefix: string;
+  i18n: I18nConfig | null;
+}
+
+function parseI18nConfig(value: unknown): I18nConfig | null {
+  if (value == null) return null;
+  if (
+    typeof value === "object" &&
+    (value as Record<string, unknown>).domains != null
+  ) {
+    throw new Error(
+      "[nextane] i18n.domains routing is not supported; use path-prefixed locales",
+    );
+  }
+  return normalizeI18nConfig(value);
 }
 
 function validatedBasePath(value: unknown): string {
@@ -73,6 +89,29 @@ function validatedBasePath(value: unknown): string {
   return value;
 }
 
+function validatedAssetPrefix(value: unknown): string {
+  if (value === undefined || value === "") return "";
+  if (typeof value !== "string") {
+    throw new Error(
+      `[nextane] assetPrefix must be a string, got ${JSON.stringify(value)}`,
+    );
+  }
+  // A full-URL assetPrefix points assets at an external CDN Nextane cannot
+  // serve from a Worker; only a same-origin path prefix is supported.
+  if (/^[a-z]+:\/\//i.test(value)) {
+    throw new Error(
+      `[nextane] a full-URL assetPrefix is not supported; use a path prefix like "/assets"`,
+    );
+  }
+  const trimmed = value.endsWith("/") ? value.slice(0, -1) : value;
+  if (!trimmed.startsWith("/")) {
+    throw new Error(
+      `[nextane] assetPrefix must start with a slash, got ${JSON.stringify(value)}`,
+    );
+  }
+  return trimmed;
+}
+
 const UNSUPPORTED_ROUTING_FILE_NAMES = ["middleware", "proxy"];
 const ROUTING_FILE_EXTENSIONS = [
   "cjs",
@@ -84,7 +123,7 @@ const ROUTING_FILE_EXTENSIONS = [
   "ts",
   "tsx",
 ];
-const UNSUPPORTED_SECURITY_CONFIG = ["i18n"];
+const UNSUPPORTED_SECURITY_CONFIG: string[] = [];
 
 export function assertNoUnsupportedRoutingFiles(root: string) {
   const unsupported = ["", "src"].flatMap((directory) =>
@@ -558,6 +597,8 @@ export async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
       headers: [],
       trailingSlash: false,
       basePath: "",
+      assetPrefix: "",
+      i18n: null,
     };
   }
 
@@ -604,24 +645,19 @@ export async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
   }
   const rewriteValue =
     typeof config.rewrites === "function" ? await config.rewrites() : [];
-  const rewriteGroups =
+  const rewriteGroups: Array<{ phase: "beforeFiles" | "afterFiles" | "fallback"; rules: unknown[] }> =
     Array.isArray(rewriteValue)
-      ? rewriteValue
+      ? [{ phase: "afterFiles", rules: rewriteValue }]
       : rewriteValue && typeof rewriteValue === "object"
-        ? [
-            ...(Array.isArray((rewriteValue as Record<string, unknown>).beforeFiles)
-              ? ((rewriteValue as Record<string, unknown>).beforeFiles as unknown[])
-              : []),
-            ...(Array.isArray((rewriteValue as Record<string, unknown>).afterFiles)
-              ? ((rewriteValue as Record<string, unknown>).afterFiles as unknown[])
-              : []),
-            ...(Array.isArray((rewriteValue as Record<string, unknown>).fallback)
-              ? ((rewriteValue as Record<string, unknown>).fallback as unknown[])
-              : []),
-          ]
+        ? (["beforeFiles", "afterFiles", "fallback"] as const).map((phase) => ({
+            phase,
+            rules: Array.isArray((rewriteValue as Record<string, unknown>)[phase])
+              ? ((rewriteValue as Record<string, unknown>)[phase] as unknown[])
+              : [],
+          }))
         : [];
-  const rewrites = rewriteGroups.flatMap((rewrite) =>
-    sanitizeRewriteRule(rewrite),
+  const rewrites = rewriteGroups.flatMap(({ phase, rules }) =>
+    rules.flatMap((rewrite) => sanitizeRewriteRule(rewrite, phase)),
   );
   const redirectValue =
     typeof config.redirects === "function" ? await config.redirects() : [];
@@ -644,6 +680,8 @@ export async function loadRoutingConfig(root: string): Promise<RoutingConfig> {
     headers,
     trailingSlash: config.trailingSlash === true,
     basePath: validatedBasePath(config.basePath),
+    assetPrefix: validatedAssetPrefix(config.assetPrefix),
+    i18n: parseI18nConfig(config.i18n),
     ...(typeof config.crossOrigin === "string"
       ? { crossOrigin: config.crossOrigin }
       : {}),
@@ -686,10 +724,14 @@ function baseRuleFields(candidate: Record<string, unknown>) {
     ...(has ? { has } : {}),
     ...(missing ? { missing } : {}),
     ...(candidate.basePath === false ? { basePath: false as const } : {}),
+    ...(candidate.locale === false ? { locale: false as const } : {}),
   };
 }
 
-function sanitizeRewriteRule(value: unknown): RewriteRule[] {
+function sanitizeRewriteRule(
+  value: unknown,
+  phase: "beforeFiles" | "afterFiles" | "fallback" = "afterFiles",
+): RewriteRule[] {
   if (
     !value ||
     typeof value !== "object" ||
@@ -703,6 +745,7 @@ function sanitizeRewriteRule(value: unknown): RewriteRule[] {
     {
       source: candidate.source as string,
       destination: candidate.destination as string,
+      phase,
       ...baseRuleFields(candidate),
     },
   ];
@@ -919,10 +962,9 @@ export function nextane(): Plugin {
     async config(userConfig) {
       const root = path.resolve(userConfig.root ?? process.cwd());
       const routingConfig = await loadRoutingConfig(root);
+      const assetBase = routingConfig.basePath || routingConfig.assetPrefix;
       return {
-        ...(routingConfig.basePath
-          ? { base: `${routingConfig.basePath}/` }
-          : {}),
+        ...(assetBase ? { base: `${assetBase}/` } : {}),
         resolve: {
           alias: PUBLIC_RUNTIME_ALIASES,
         },

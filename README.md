@@ -73,8 +73,10 @@ Octane describes itself as alpha software. Nextane is even more experimental.
   (`setPreviewData`/`clearPreviewData`/`setDraftMode`)
 - `next.config` `redirects()`, `headers()`, and `rewrites()` with
   `has`/`missing` conditions and external rewrite proxying
-- `basePath`, including prefixed assets, data routes, router events, and
-  `basePath: false` rule variants
+- `basePath` and `assetPrefix`, including prefixed assets, data routes, router
+  events, and `basePath: false` rule variants
+- `i18n` locale-prefixed routing with an unprefixed default locale and
+  `locale: false` rewrite/redirect handling
 - `nextane/head`, `nextane/document`, `nextane/link`, `nextane/router`,
   `useRouter`, and `withRouter`
 - custom `_app`, `_document`, `_error`, `404`, and `500` pages
@@ -92,7 +94,7 @@ routes, custom errors, and ISR without pulling React into the runtime.
 - most React ecosystem packages. Octane has its own library bindings, but React
   packages are not drop-in compatible.
 - class components or React's synthetic event system
-- middleware, i18n/locales, and `assetPrefix`
+- middleware, i18n `domains`, and Accept-Language locale detection
 - every Node-specific request, response, or streaming behavior
 - deployment targets other than Cloudflare Workers today. This is a shortcut
   in Nextane, not an Octane limitation.

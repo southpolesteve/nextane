@@ -63,6 +63,7 @@ declare module "virtual:nextane-server-manifest" {
     crossOrigin?: string;
     trailingSlash?: boolean;
     basePath?: string;
+    assetPrefix?: string;
   };
   export const preview: {
     previewModeId: string;

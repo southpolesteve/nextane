@@ -20,7 +20,7 @@ checkout can omit `NEXTANE_NEXT_VERSION`:
 npm run test:upstream -- /absolute/path/to/next.js
 ```
 
-The 34 selected test files are:
+The 39 selected test files are:
 
 - `test/e2e/hello-world/hello-world.test.ts`
 - `test/e2e/404-page-router/index.test.ts`
@@ -47,6 +47,8 @@ The 34 selected test files are:
 - `test/e2e/optimized-loading/test/index.test.ts`
 - `test/e2e/disable-js-preload/test/index.test.ts`
 - `test/e2e/invalid-static-asset-404-pages/invalid-static-asset-404-pages.test.ts`
+- `test/e2e/invalid-static-asset-404-pages/invalid-static-asset-404-pages-base-path.test.ts`
+- `test/e2e/invalid-static-asset-404-pages/invalid-static-asset-404-pages-asset-prefix.test.ts`
 - `test/e2e/prerender-crawler.test.ts`
 - `test/e2e/streaming-ssr/index.test.ts`
 - `test/e2e/link-with-api-rewrite/index.test.ts`
@@ -55,6 +57,9 @@ The 34 selected test files are:
 - `test/e2e/basepath/router-events.test.ts`
 - `test/e2e/basepath/trailing-slash.test.ts`
 - `test/e2e/basepath/query-hash.test.ts`
+- `test/e2e/i18n-api-support/index.test.ts`
+- `test/e2e/i18n-ignore-rewrite-source-locale/rewrites.test.ts`
+- `test/e2e/i18n-fallback-collision/i18n-fallback-collision.test.ts`
 - `test/e2e/prerender.test.ts`
 
 For each isolated fixture, `adapt-fixture.mjs`:
@@ -74,13 +79,15 @@ import, replaces one Worker-incompatible filesystem read with Vite `?raw`,
 and warms the two large-data pages before the deploy adapter snapshots logs.
 The ssr-react-context profile replaces the legacy `Context.Consumer` render
 prop with `useContext`, the streaming-ssr profile replaces one styled-jsx
-block with a plain string `style`, and the basepath profile replaces a
+block with a plain string `style`, the basepath profile replaces a
 `next/error` import and rewrites the event-log `_app` without its
 optional-function-parameter custom hook (octane's compiled hook calls append
-a slot sentinel that would land in that parameter). Each fixture also gets a
-`node_modules/octane` symlink so environment-aware runtime resolution applies
-instead of a static alias. The upstream test cases themselves remain
-unchanged.
+a slot sentinel that would land in that parameter), and the
+i18n-fallback-collision profile translates the fixture's `next.config.ts` to a
+`next.config.js` overlay because the build-time config loader cannot require
+TypeScript. Each fixture also gets a `node_modules/octane` symlink so
+environment-aware runtime resolution applies instead of a static alias. The
+upstream test cases themselves remain unchanged.
 
 The upstream Next.js runner requires the Node version supported by the
 checkout (Node 20/22); set `NEXTANE_NODE_BIN` to Nextane's own Node binary so
@@ -92,8 +99,8 @@ it never deploys or publishes anything.
 
 ## Current result
 
-Against the local Next.js `v16.2.2` baseline, the 34-file run produced
-**311/312 substantive upstream deploy test cases passing**:
+Against the local Next.js `v16.2.2` baseline, the 39-file run produced
+**338/339 substantive upstream deploy test cases passing**:
 
 - original rendering/data/link/head/router/API/trailing-slash baseline: 189/189;
 - prerendering, `getStaticPaths` fallback modes, page-data caching, ISR,
@@ -102,23 +109,30 @@ Against the local Next.js `v16.2.2` baseline, the 34-file run produced
 - the additional `_app`/`_document` files (CSP hash/nonce documents and log
   hygiene): 3/3;
 - SSR React context: 2/2; script loading (`optimized-loading`,
-  `disable-js-preload`): 8/8; invalid static asset 404s: 3/3; crawler-aware
-  fallback prerendering: 3/3; streaming SSR: 5/5; `has`-conditional rewrites
-  to API routes: 2/2;
+  `disable-js-preload`): 8/8; invalid static asset 404s across the plain,
+  `basePath`, and `assetPrefix` variants: 9/9; crawler-aware fallback
+  prerendering: 3/3; streaming SSR: 5/5; `has`-conditional rewrites to API
+  routes: 2/2;
+- i18n (locale-prefixed routing with an unprefixed default locale):
+  `i18n-api-support` 2/2, `i18n-ignore-rewrite-source-locale` (`locale:false`
+  rewrites) 8/8, and `i18n-fallback-collision` (locale-strip before
+  multi-level dynamic matching) 11/11;
 - `basePath` (error pages, redirects/rewrites, router events, trailing
   slash, query/hash): 33/34. The one failure, `should rewrite without
   basePath when set to false`, server-proxies `https://example.vercel.sh`;
   this sandbox's egress policy answers 403 for that host, so the case cannot
   pass here. The proxy implementation itself is exercised by unit tests.
-- **7 deploy-mode skip sentinels passed and are reported separately**: five
-  from `404-page-router`, one from `api-resolver-query-writeable`, and one
-  from `app-document/client`.
+- **12 deploy-mode skip sentinels passed and are reported separately**: five
+  from `404-page-router`, one from `api-resolver-query-writeable`, one from
+  `app-document/client`, one from `i18n-api-support` (external fallback
+  rewrite), and four from `i18n-ignore-rewrite-source-locale` (production
+  `_next/static` chunk assertions).
 - **3 pending tests**: two production-only routes-manifest assertions and one
   upstream `it.skip` in `basepath/error-pages`.
 
-The runner therefore reports 318 passing test cases, one environment-limited
-failure, and three pending tests, but **318 must not be described as
-substantive compatibility coverage**. The honest result is 311/312
+The runner therefore reports 350 passing test cases, one environment-limited
+failure, and three pending tests, but **350 must not be described as
+substantive compatibility coverage**. The honest result is 338/339
 substantive cases in this environment, with the sentinels, the egress-limited
 external-rewrite case, and the skips reported separately.
 Nextane's own upstream conformance test covers writable API `req.query`

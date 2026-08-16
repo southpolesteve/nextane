@@ -13,12 +13,16 @@ export interface RouteHas {
   value?: string;
 }
 
+export type RewritePhase = "beforeFiles" | "afterFiles" | "fallback";
+
 export interface RewriteRule {
   source: string;
   destination: string;
   has?: RouteHas[];
   missing?: RouteHas[];
   basePath?: false;
+  locale?: false;
+  phase?: RewritePhase;
 }
 
 export interface RedirectRule extends RewriteRule {
@@ -32,6 +36,7 @@ export interface HeaderRule {
   has?: RouteHas[];
   missing?: RouteHas[];
   basePath?: false;
+  locale?: false;
 }
 
 interface SourceParameter {
@@ -301,9 +306,15 @@ export function matchRedirectRule(
   rules: RedirectRule[],
   pathname: string,
   context: RuleRequestContext,
+  localizedPathname = pathname,
 ): { rule: RedirectRule; location: URL; internal: boolean } | null {
   for (const rule of rules) {
-    const values = matchRuleSource(rule.source, pathname);
+    // `locale: false` sources keep the locale segment, so match them against
+    // the locale-included path.
+    const values = matchRuleSource(
+      rule.source,
+      rule.locale === false ? localizedPathname : pathname,
+    );
     if (!values) continue;
     const captured = evaluateRuleConditions(rule, context);
     if (!captured) continue;
@@ -334,10 +345,14 @@ export function matchHeaderRules(
   rules: HeaderRule[],
   pathname: string,
   context: RuleRequestContext,
+  localizedPathname = pathname,
 ): Array<{ key: string; value: string }> {
   const applied: Array<{ key: string; value: string }> = [];
   for (const rule of rules) {
-    const values = matchRuleSource(rule.source, pathname);
+    const values = matchRuleSource(
+      rule.source,
+      rule.locale === false ? localizedPathname : pathname,
+    );
     if (!values) continue;
     const captured = evaluateRuleConditions(rule, context);
     if (!captured) continue;

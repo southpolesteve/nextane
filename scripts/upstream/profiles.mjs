@@ -136,8 +136,11 @@ export const upstreamSmokeSuites = [
   },
   {
     id: "invalid-static-asset-404-pages",
-    testFile:
+    testFiles: [
       "test/e2e/invalid-static-asset-404-pages/invalid-static-asset-404-pages.test.ts",
+      "test/e2e/invalid-static-asset-404-pages/invalid-static-asset-404-pages-base-path.test.ts",
+      "test/e2e/invalid-static-asset-404-pages/invalid-static-asset-404-pages-asset-prefix.test.ts",
+    ],
     signatures: [
       "invalid-static-asset-404-pages.test.ts",
       "pages/404.tsx",
@@ -175,6 +178,25 @@ export const upstreamSmokeSuites = [
       "pages/external-and-back.js",
     ],
     warmupPaths: ["/docs"],
+  },
+  {
+    id: "i18n-api-support",
+    testFile: "test/e2e/i18n-api-support/index.test.ts",
+    signatures: ["pages/api/hello.js", "pages/api/blog/[slug].js"],
+  },
+  {
+    id: "i18n-ignore-rewrite-source-locale",
+    testFile: "test/e2e/i18n-ignore-rewrite-source-locale/rewrites.test.ts",
+    signatures: ["pages/api/hello.js", "public/file.txt"],
+  },
+  {
+    id: "i18n-fallback-collision",
+    testFile: "test/e2e/i18n-fallback-collision/i18n-fallback-collision.test.ts",
+    signatures: [
+      "pages/[first]/[second]/[third]/[fourth]/index.js",
+      "pages/index.tsx",
+    ],
+    warmupPaths: ["/first", "/first/second/third/fourth"],
   },
   {
     id: "prerender",
