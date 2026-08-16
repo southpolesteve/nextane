@@ -151,6 +151,7 @@ function rewriteImports(source, filePath, renames, profile) {
     .replace(/(["'])next\/head\1/g, '"nextane/head"')
     .replace(/(["'])next\/link\1/g, '"nextane/link"')
     .replace(/(["'])next\/router\1/g, '"nextane/router"')
+    .replace(/(["'])next\/navigation\1/g, '"nextane/navigation"')
     .replace(/(["'])next\/document\1/g, '"nextane/document"')
     .replace(
       /import\s+\{([^}]+)\}\s+from\s+["']react["']/g,
@@ -222,6 +223,7 @@ function aliasEntries(nextaneRoot) {
     ["nextane/document", path.join(source, "runtime", "document.tsrx")],
     ["nextane/link", path.join(source, "runtime", "link.tsrx")],
     ["nextane/router", path.join(source, "runtime", "router.ts")],
+    ["nextane/navigation", path.join(source, "runtime", "app-navigation.ts")],
     ["nextane/client", path.join(source, "client.ts")],
     ["nextane/server", path.join(source, "server", "handler.ts")],
     ["nextane/types", path.join(source, "types.ts")],

@@ -12,6 +12,7 @@ larger Next.js Pages Router compatibility claim.
 | Data functions | Working slice | `getStaticProps`, `getServerSideProps`, `getStaticPaths`, and page `getInitialProps` |
 | Special pages | Working slice | `_app` and `_app.getInitialProps`, `_document` and `renderPage` enhancement, `_error`, `404`, and `500` |
 | Client runtime | Working slice | modern and legacy `Link` (including the i18n `locale` prop), URL objects, singleton router, `useRouter`, `withRouter`, push/replace/back, route events |
+| `next/navigation` | Working slice | Pages Router-compatible `useSelectedLayoutSegment`/`useSelectedLayoutSegments` (empty constants), `usePathname`, `useSearchParams`, `useParams`, and an App Router-shaped `useRouter` adapter over the singleton |
 | Head | Working slice | title/head output across SSR and soft navigation |
 | API routes | Working slice | classic callbacks plus Edge/Web `Request`/`Response`; method, URL, headers, query, cookies, parsed body, a 1 MiB default body limit with `config.api.bodyParser` controls, status, JSON, send, redirect |
 | Preview Mode | Working slice | signed `__prerender_bypass`/`__next_preview_data` cookies (AES-256-GCM + HMAC-SHA256, per-build server-only keys), `setPreviewData`/`clearPreviewData`/`setDraftMode`, preview context in `getStaticProps`/`getServerSideProps`, per-request preview renders that bypass the shared ISR path, stale-cookie clearing |
@@ -43,11 +44,12 @@ larger Next.js Pages Router compatibility claim.
 
 The prototype-owned suite currently has:
 
-- **79/79 unit and security tests** covering route discovery/matching, classic
+- **86/86 unit and security tests** covering route discovery/matching, classic
   and Edge API request/response adaptation, URL normalization, cache isolation,
   Preview Mode signing and bypass semantics, redirects/headers/conditional
   rewrites and their phase order, basePath/assetPrefix routing, i18n locale
-  resolution and render context, and the expanded Pages server contract;
+  resolution and render context, the `next/navigation` hook adapters, and the
+  expanded Pages server contract;
 - **6/6 browser flows locally** covering SSR, hydration, state, duplicate-free
   links, soft navigation, browser back, dynamic params, API routes, custom
   404s, shared ISR artifacts, and public security boundaries; and
@@ -64,10 +66,10 @@ class components or Worker filesystem assumptions require migration, builds
 with Vite, and runs the result locally in Wrangler. The original upstream test
 cases are not rewritten.
 
-Against the local Next.js `v16.2.2` baseline, the current 42-file run
+Against the local Next.js `v16.2.2` baseline, the current 43-file run
 produced:
 
-- **372/373 substantive upstream deploy test cases passed**:
+- **373/374 substantive upstream deploy test cases passed**:
   - original rendering/data baseline: 69/69;
   - async modules: 7/7;
   - Edge Pages support: 8/8;
@@ -102,6 +104,9 @@ produced:
     `https://example.vercel.sh`; the development sandbox's egress policy
     answers 403 for that host, so the case cannot pass in this environment.
     The external-rewrite proxy itself is covered by prototype tests.
+  - `next/navigation` hooks in a Pages Router page
+    (`useSelectedLayoutSegment`/`useSelectedLayoutSegments`, exercised
+    through a real Playwright browser): 1/1.
 - **12 deploy-mode skip sentinels passed and are reported separately**:
   five from `404-page-router`, one from `api-resolver-query-writeable`, one
   from `app-document/client`, one from `i18n-api-support`, and four from
@@ -109,13 +114,13 @@ produced:
 - **3 pending tests**: two production-only routes-manifest assertions and one
   upstream `it.skip` in `basepath/error-pages`.
 
-The upstream runner therefore reports 384 passing cases in total, but the
+The upstream runner therefore reports 385 passing cases in total, but the
 twelve sentinels do not exercise their suites' behavior. The compatibility
-result is **372/373 substantive test cases, plus twelve deploy-mode
+result is **373/374 substantive test cases, plus twelve deploy-mode
 sentinels, one environment-limited external-rewrite failure, and three
-skips** — not 384 substantive test cases.
+skips** — not 385 substantive test cases.
 
-The selected files are the 42 listed in
+The selected files are the 43 listed in
 [`scripts/upstream/README.md`](../scripts/upstream/README.md).
 
 Run the exact filtered harness with a prepared v16.2.2 checkout:

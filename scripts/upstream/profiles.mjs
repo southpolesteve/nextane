@@ -215,6 +215,15 @@ export const upstreamSmokeSuites = [
     warmupPaths: ["/", "/new"],
   },
   {
+    id: "useselectedlayoutsegment-s-in-pages-router",
+    testFile:
+      "test/e2e/useselectedlayoutsegment-s-in-pages-router/useselectedlayoutsegment-s-in-pages-router.test.ts",
+    signatures: [
+      "useselectedlayoutsegment-s-in-pages-router.test.ts",
+      "pages/index.tsx",
+    ],
+  },
+  {
     id: "prerender",
     testFile: "test/e2e/prerender.test.ts",
     signatures: [

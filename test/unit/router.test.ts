@@ -248,3 +248,123 @@ describe("withLocalePrefix", () => {
     );
   });
 });
+
+describe("next/navigation compatibility", () => {
+  it("segment hooks return the Pages Router constants", async () => {
+    const { useSelectedLayoutSegment, useSelectedLayoutSegments } =
+      await import("../../src/runtime/app-navigation");
+    expect(useSelectedLayoutSegment()).toBe(null);
+    expect(useSelectedLayoutSegments()).toEqual([]);
+  });
+
+  it("usePathname strips query and hash from the current URL", async () => {
+    const { usePathname } = await import("../../src/runtime/app-navigation");
+    setRouterState({
+      route: "/blog/[slug]",
+      pathname: "/blog/[slug]",
+      query: { slug: "hi" },
+      asPath: "/blog/hi?ref=1#frag",
+      basePath: "",
+      isReady: true,
+      isPreview: false,
+      isFallback: false,
+    });
+    expect(usePathname()).toBe("/blog/hi");
+  });
+
+  it("usePathname returns null for a dynamic route while falling back", async () => {
+    const { usePathname } = await import("../../src/runtime/app-navigation");
+    setRouterState({
+      route: "/blog/[slug]",
+      pathname: "/blog/[slug]",
+      query: {},
+      asPath: "/blog/[slug]",
+      basePath: "",
+      isReady: false,
+      isPreview: false,
+      isFallback: true,
+    });
+    expect(usePathname()).toBe(null);
+  });
+
+  it("useSearchParams reflects the current query and is empty before ready", async () => {
+    const { useSearchParams } = await import("../../src/runtime/app-navigation");
+    setRouterState({
+      route: "/",
+      pathname: "/",
+      query: { a: "1", b: "2" },
+      asPath: "/?a=1&b=2",
+      basePath: "",
+      isReady: true,
+      isPreview: false,
+      isFallback: false,
+    });
+    expect(useSearchParams().get("a")).toBe("1");
+    expect(useSearchParams().get("b")).toBe("2");
+
+    setRouterState({
+      route: "/",
+      pathname: "/",
+      query: {},
+      asPath: "/?a=1",
+      basePath: "",
+      isReady: false,
+      isPreview: false,
+      isFallback: false,
+    });
+    expect(useSearchParams().toString()).toBe("");
+  });
+
+  it("useParams extracts dynamic route params", async () => {
+    const { useParams } = await import("../../src/runtime/app-navigation");
+    setRouterState({
+      route: "/[slug]/about",
+      pathname: "/[slug]/about",
+      query: { slug: "blog", extra: "ignored" },
+      asPath: "/blog/about",
+      basePath: "",
+      isReady: true,
+      isPreview: false,
+      isFallback: false,
+    });
+    expect(useParams()).toEqual({ slug: "blog" });
+
+    setRouterState({
+      route: "/[slug]/about",
+      pathname: "/[slug]/about",
+      query: {},
+      asPath: "/blog/about",
+      basePath: "",
+      isReady: false,
+      isPreview: false,
+      isFallback: false,
+    });
+    expect(useParams()).toBe(null);
+  });
+
+  it("useRouter adapts navigation onto the singleton Pages Router", async () => {
+    const { useRouter: useAppRouter } = await import(
+      "../../src/runtime/app-navigation"
+    );
+    const navigate = vi.fn(async () => true);
+    configureClientRouter({ navigate, prefetch: async () => {} });
+    setRouterState({
+      route: "/",
+      pathname: "/",
+      query: {},
+      asPath: "/",
+      basePath: "",
+      isReady: true,
+      isPreview: false,
+      isFallback: false,
+    });
+    const appRouter = useAppRouter();
+    await appRouter.push("/next");
+    expect(navigate).toHaveBeenCalledWith(
+      "/next",
+      "push",
+      { scroll: undefined },
+      "/next",
+    );
+  });
+});

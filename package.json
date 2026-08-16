@@ -78,6 +78,10 @@
       "types": "./src/runtime/router.d.ts",
       "default": "./src/runtime/router.ts"
     },
+    "./navigation": {
+      "types": "./src/runtime/app-navigation.d.ts",
+      "default": "./src/runtime/app-navigation.ts"
+    },
     "./client": {
       "types": "./src/client.d.ts",
       "default": "./src/client.ts"
