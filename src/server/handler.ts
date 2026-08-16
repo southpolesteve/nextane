@@ -126,6 +126,9 @@ export interface RenderArtifact {
   trailingSlash?: boolean;
   cacheable?: boolean;
   preview?: boolean;
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
   generatedAt: number;
 }
 
@@ -393,6 +396,9 @@ async function resolvePageData(
   response: PageResponse,
   skipPageInitialProps: boolean,
   preview: PreviewState = DISABLED_PREVIEW,
+  localeContext:
+    | { locale: string; locales: string[]; defaultLocale: string }
+    | undefined = undefined,
 ): Promise<PageResolution> {
   const query = searchQuery(pageUrl, params);
   const req = createPageRequest(request);
@@ -412,6 +418,7 @@ async function resolvePageData(
       query,
       resolvedUrl: `${resolvedUrl.pathname}${resolvedUrl.search}`,
       ...previewContext,
+      ...(localeContext ?? {}),
     };
     const result = (await pageModule.getServerSideProps(
       context,
@@ -468,6 +475,7 @@ async function resolvePageData(
             draftMode: true,
           }
         : {}),
+      ...(localeContext ?? {}),
     })) as GetStaticPropsResult<Record<string, unknown>>;
     if ("redirect" in result) {
       return {
@@ -800,6 +808,7 @@ async function createRenderArtifact(
   resolvedUrl = pageUrl,
   fallbackShell = false,
   preview: PreviewState = DISABLED_PREVIEW,
+  locale?: string,
 ): Promise<RenderArtifact> {
   const pageModule = await route.load();
   const Page = pageModule.default as ComponentBody<Record<string, unknown>> | undefined;
@@ -824,6 +833,14 @@ async function createRenderArtifact(
   const requestDependentInitialProps =
     typeof App?.getInitialProps === "function" ||
     typeof Document?.getInitialProps === "function";
+  const localeContext =
+    manifest.config?.i18n && locale
+      ? {
+          locale,
+          locales: manifest.config.i18n.locales,
+          defaultLocale: manifest.config.i18n.defaultLocale,
+        }
+      : undefined;
   const response = attachPreviewApi(
     new PageResponse(),
     previewCredentialsFor(manifest),
@@ -852,6 +869,7 @@ async function createRenderArtifact(
         response,
         typeof App?.getInitialProps === "function",
         preview,
+        localeContext,
       );
   const query = resolution.gsp ? { ...params } : searchQuery(pageUrl, params);
   const req = createPageRequest(request);
@@ -907,6 +925,13 @@ async function createRenderArtifact(
     response: resolution.response,
     crossOrigin: manifest.config?.crossOrigin,
     trailingSlash: manifest.config?.trailingSlash,
+    ...(localeContext
+      ? {
+          locale: localeContext.locale,
+          locales: localeContext.locales,
+          defaultLocale: localeContext.defaultLocale,
+        }
+      : {}),
     cacheable:
       resolution.gsp &&
       !preview.enabled &&
@@ -930,6 +955,13 @@ async function createRenderArtifact(
     query,
     asPath: `${displayUrl.pathname}${displayUrl.search}`,
     basePath: manifest.config?.basePath ?? "",
+    ...(localeContext
+      ? {
+          locale: localeContext.locale,
+          locales: localeContext.locales,
+          defaultLocale: localeContext.defaultLocale,
+        }
+      : {}),
     isReady: true,
     isPreview: preview.enabled,
     isFallback: fallbackShell,
@@ -1152,6 +1184,13 @@ async function renderArtifactResponse(
     ...(artifact.gsp ? { gsp: true } : {}),
     ...(artifact.gssp ? { gssp: true } : {}),
     trailingSlash: artifact.trailingSlash,
+    ...(artifact.locale
+      ? {
+          locale: artifact.locale,
+          locales: artifact.locales,
+          defaultLocale: artifact.defaultLocale,
+        }
+      : {}),
   };
 
   const dataScript = `<script id="__NEXT_DATA__" type="application/json">${safeJson(nextData)}</script>`;
@@ -1441,6 +1480,7 @@ async function loadArtifact(
   displayUrl = pageUrl,
   resolvedUrl = pageUrl,
   preview: PreviewState = DISABLED_PREVIEW,
+  locale?: string,
 ): Promise<{ artifact: RenderArtifact; cacheStatus?: string | null }> {
   if (preview.enabled) {
     // Preview renders are always per-request and must never read from or
@@ -1458,6 +1498,7 @@ async function loadArtifact(
         resolvedUrl,
         false,
         preview,
+        locale,
       ),
     };
   }
@@ -1524,6 +1565,8 @@ async function loadArtifact(
             artifactDisplayUrl,
             artifactResolvedUrl,
             true,
+            DISABLED_PREVIEW,
+            locale,
           ),
         };
       }
@@ -1560,6 +1603,9 @@ async function loadArtifact(
       shouldRender,
       artifactDisplayUrl,
       artifactResolvedUrl,
+      false,
+      DISABLED_PREVIEW,
+      locale,
     ),
   };
 }
@@ -1962,6 +2008,7 @@ export function createNextaneHandler(
           pageUrl,
           pageUrl,
           previewState,
+          locale,
         );
         if (artifact.response?.ended) {
           const responseHeaders = new Headers(artifact.response.headers);
@@ -2096,6 +2143,7 @@ export function createNextaneHandler(
         routing.displayUrl,
         routing.resolvedUrl,
         previewState,
+        locale,
       );
       if (artifact.notFound && match.route.route !== "/404") {
         return renderNotFound(manifest, request, env);
@@ -2132,6 +2180,21 @@ export function createNextaneHandler(
     env: NextaneEnvironment,
   ): Promise<Response> {
     let sanitized = stripReservedRequestHeaders(request);
+    // Collapse repeated slashes in the pathname before routing, matching
+    // Next.js: `/base//sv/x` and `/base/sv/x` resolve to the same route.
+    const rawUrl = new URL(sanitized.url);
+    if (/\/{2,}/.test(rawUrl.pathname)) {
+      const normalizedUrl = new URL(rawUrl);
+      normalizedUrl.pathname = rawUrl.pathname.replace(/\/{2,}/g, "/");
+      const normalized = new Request(normalizedUrl, sanitized);
+      if ("cf" in sanitized) {
+        Object.defineProperty(normalized, "cf", {
+          value: (sanitized as Request & { cf?: unknown }).cf,
+          configurable: true,
+        });
+      }
+      sanitized = normalized;
+    }
     const requestPathname = new URL(sanitized.url).pathname;
     const hadBasePath =
       basePath === "" || hasBasePath(requestPathname, basePath);

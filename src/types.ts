@@ -83,6 +83,9 @@ export interface GetStaticPropsContext {
   previewData?: unknown;
   draftMode?: boolean;
   revalidateReason?: "build" | "stale" | "on-demand";
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
 }
 
 export interface GetStaticPathsContext {
@@ -133,6 +136,9 @@ export interface NextaneData {
   customServer?: boolean;
   err?: { name: string; message: string; stack?: string };
   trailingSlash?: boolean;
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
 }
 
 export interface NextaneRouter {
@@ -141,6 +147,9 @@ export interface NextaneRouter {
   query: ParsedUrlQuery;
   asPath: string;
   basePath: string;
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
   isReady: boolean;
   isPreview: boolean;
   isFallback: boolean;

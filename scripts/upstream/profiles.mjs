@@ -199,6 +199,15 @@ export const upstreamSmokeSuites = [
     warmupPaths: ["/first", "/first/second/third/fourth"],
   },
   {
+    id: "i18n-ignore-redirect-source-locale",
+    testFiles: [
+      "test/e2e/i18n-ignore-redirect-source-locale/redirects.test.ts",
+      "test/e2e/i18n-ignore-redirect-source-locale/redirects-with-basepath.test.ts",
+    ],
+    signatures: ["pages/newpage.js"],
+    warmupPaths: ["/newpage", "/sv/newpage"],
+  },
+  {
     id: "prerender",
     testFile: "test/e2e/prerender.test.ts",
     signatures: [

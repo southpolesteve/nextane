@@ -96,6 +96,16 @@ function queryFromUrl(url: URL, params: ParsedUrlQuery): ParsedUrlQuery {
   return { ...query, ...params };
 }
 
+const localeFields = {
+  ...(initialData.locale !== undefined ? { locale: initialData.locale } : {}),
+  ...(initialData.locales !== undefined
+    ? { locales: initialData.locales }
+    : {}),
+  ...(initialData.defaultLocale !== undefined
+    ? { defaultLocale: initialData.defaultLocale }
+    : {}),
+};
+
 function applyRouterState(url: URL, route: string, params: ParsedUrlQuery) {
   setRouterState({
     route,
@@ -103,6 +113,7 @@ function applyRouterState(url: URL, route: string, params: ParsedUrlQuery) {
     query: queryFromUrl(url, params),
     asPath: `${stripBasePath(url.pathname, basePath)}${url.search}${url.hash}`,
     basePath,
+    ...localeFields,
     isReady: true,
     isPreview: false,
     isFallback: false,
@@ -117,6 +128,7 @@ setRouterState({
   query: initialData.query,
   asPath: `${stripBasePath(initialUrl.pathname, basePath)}${initialUrl.search}${initialUrl.hash}`,
   basePath,
+  ...localeFields,
   isReady: true,
   isPreview: false,
   isFallback: initialData.isFallback,

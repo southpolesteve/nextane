@@ -12,6 +12,9 @@ export interface RouterState {
   query: import("../types").ParsedUrlQuery;
   asPath: string;
   basePath: string;
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
   isReady: boolean;
   isPreview: boolean;
   isFallback: boolean;

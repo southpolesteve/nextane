@@ -20,7 +20,7 @@ checkout can omit `NEXTANE_NEXT_VERSION`:
 npm run test:upstream -- /absolute/path/to/next.js
 ```
 
-The 39 selected test files are:
+The 41 selected test files are:
 
 - `test/e2e/hello-world/hello-world.test.ts`
 - `test/e2e/404-page-router/index.test.ts`
@@ -60,6 +60,8 @@ The 39 selected test files are:
 - `test/e2e/i18n-api-support/index.test.ts`
 - `test/e2e/i18n-ignore-rewrite-source-locale/rewrites.test.ts`
 - `test/e2e/i18n-fallback-collision/i18n-fallback-collision.test.ts`
+- `test/e2e/i18n-ignore-redirect-source-locale/redirects.test.ts`
+- `test/e2e/i18n-ignore-redirect-source-locale/redirects-with-basepath.test.ts`
 - `test/e2e/prerender.test.ts`
 
 For each isolated fixture, `adapt-fixture.mjs`:
@@ -99,8 +101,8 @@ it never deploys or publishes anything.
 
 ## Current result
 
-Against the local Next.js `v16.2.2` baseline, the 39-file run produced
-**338/339 substantive upstream deploy test cases passing**:
+Against the local Next.js `v16.2.2` baseline, the 41-file run produced
+**370/371 substantive upstream deploy test cases passing**:
 
 - original rendering/data/link/head/router/API/trailing-slash baseline: 189/189;
 - prerendering, `getStaticPaths` fallback modes, page-data caching, ISR,
@@ -115,8 +117,10 @@ Against the local Next.js `v16.2.2` baseline, the 39-file run produced
   routes: 2/2;
 - i18n (locale-prefixed routing with an unprefixed default locale):
   `i18n-api-support` 2/2, `i18n-ignore-rewrite-source-locale` (`locale:false`
-  rewrites) 8/8, and `i18n-fallback-collision` (locale-strip before
-  multi-level dynamic matching) 11/11;
+  rewrites) 8/8, `i18n-fallback-collision` (locale-strip before multi-level
+  dynamic matching) 11/11, and `i18n-ignore-redirect-source-locale`
+  (`locale:false` redirects with the destination locale reflected in
+  `router.locale`, plain and under `basePath`) 32/32;
 - `basePath` (error pages, redirects/rewrites, router events, trailing
   slash, query/hash): 33/34. The one failure, `should rewrite without
   basePath when set to false`, server-proxies `https://example.vercel.sh`;
@@ -130,9 +134,9 @@ Against the local Next.js `v16.2.2` baseline, the 39-file run produced
 - **3 pending tests**: two production-only routes-manifest assertions and one
   upstream `it.skip` in `basepath/error-pages`.
 
-The runner therefore reports 350 passing test cases, one environment-limited
-failure, and three pending tests, but **350 must not be described as
-substantive compatibility coverage**. The honest result is 338/339
+The runner therefore reports 382 passing test cases, one environment-limited
+failure, and three pending tests, but **382 must not be described as
+substantive compatibility coverage**. The honest result is 370/371
 substantive cases in this environment, with the sentinels, the egress-limited
 external-rewrite case, and the skips reported separately.
 Nextane's own upstream conformance test covers writable API `req.query`

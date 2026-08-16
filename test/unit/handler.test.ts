@@ -2190,3 +2190,42 @@ describe("i18n", () => {
     expect(await response.text()).toContain("first");
   });
 });
+
+describe("i18n render context", () => {
+  it("exposes locale/locales/defaultLocale to the router and page data", async () => {
+    const localeReporter = {
+      route: "/newpage",
+      regexSource: "^/newpage/?$",
+      params: [],
+      id: 0,
+      kind: "page" as const,
+      async load() {
+        return {
+          default: () =>
+            createElement("p", { id: "current-locale" }, Router.locale),
+        };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [localeReporter],
+        loadApp: null,
+        loadDocument: null,
+        config: { i18n: { locales: ["en", "sv", "nl"], defaultLocale: "en" } },
+      }),
+    );
+
+    const sv = await handler(new Request("https://nextane.test/sv/newpage"), {
+      ASSETS: assets,
+    });
+    const svHtml = await sv.text();
+    expect(svHtml).toContain('id="current-locale">sv');
+    expect(svHtml).toContain('"locale":"sv"');
+    expect(svHtml).toContain('"defaultLocale":"en"');
+
+    const def = await handler(new Request("https://nextane.test/newpage"), {
+      ASSETS: assets,
+    });
+    expect(await def.text()).toContain('id="current-locale">en');
+  });
+});
