@@ -19,7 +19,7 @@ larger Next.js Pages Router compatibility claim.
 | Routing config | Working slice | `redirects()`/`headers()`/`rewrites()` with `has`/`missing` conditions, `:param(pattern)` sources, case-insensitive matching, external rewrite proxying, `beforeFiles`/`afterFiles`/`fallback` phase order, `basePath: false`/`locale: false` variants |
 | basePath | Working slice | prefixed pages/assets/data routes, outside-prefix 404s, prefixed router events and history, `router.basePath`, Link prefixing, trailing-slash interplay |
 | assetPrefix | Working slice | prefixed `_next` and hashed chunk serving, prefixed build manifest, plain-text asset 404s |
-| i18n | Working slice | locale-prefixed routing with an unprefixed default locale, locale-strip before dynamic matching, `locale: false` rewrites/redirects with default-locale insertion, `router.locale`/`locales`/`defaultLocale` and locale in `getStaticProps`/`getServerSideProps`, `/api` served unprefixed |
+| i18n | Working slice | locale-prefixed routing with an unprefixed default locale, locale-strip before dynamic matching, `locale: false` rewrites/redirects with default-locale insertion, active-locale preservation on internal redirects, header rules applied across locales, per-locale static/ISR artifact caching, locale-prefixed `/_next/data` routes, `router.locale`/`locales`/`defaultLocale` and locale in `getStaticProps`/`getServerSideProps`, `/api` served unprefixed |
 | Page data | Working slice | `/_next/data/:buildId/*.json` for static and server props |
 | ISR | Working slice | shared render artifact, numeric revalidation, Workers Cache SWR |
 | URL policy | Working slice | `trailingSlash` redirects, SSR links, client navigation, dotted paths, and query strings |
@@ -44,12 +44,14 @@ larger Next.js Pages Router compatibility claim.
 
 The prototype-owned suite currently has:
 
-- **86/86 unit and security tests** covering route discovery/matching, classic
+- **93/93 unit and security tests** covering route discovery/matching, classic
   and Edge API request/response adaptation, URL normalization, cache isolation,
   Preview Mode signing and bypass semantics, redirects/headers/conditional
-  rewrites and their phase order, basePath/assetPrefix routing, i18n locale
-  resolution and render context, the `next/navigation` hook adapters, and the
-  expanded Pages server contract;
+  rewrites and their phase order (a real page beats an `afterFiles` rewrite),
+  basePath/assetPrefix routing, i18n locale resolution and render context,
+  per-locale static/ISR artifact caching, locale-preserving redirects, header
+  rules across locales, locale-prefixed data routes, the `next/navigation`
+  hook adapters, and the expanded Pages server contract;
 - **6/6 browser flows locally** covering SSR, hydration, state, duplicate-free
   links, soft navigation, browser back, dynamic params, API routes, custom
   404s, shared ISR artifacts, and public security boundaries; and

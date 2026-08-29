@@ -10,6 +10,7 @@ import {
   javascriptStringLiteral,
   loadRoutingConfig,
   nextane,
+  validatedAssetPrefix,
 } from "../../src/plugin";
 
 async function filesBelow(directory: string): Promise<string[]> {
@@ -194,5 +195,23 @@ describe("client build security", () => {
     expect(config.headers).toEqual([
       { source: "/add-header", headers: [{ key: "x-hello", value: "world" }] },
     ]);
+  });
+});
+
+describe("assetPrefix validation", () => {
+  it("normalizes path prefixes and treats empty/'/' as no prefix", () => {
+    expect(validatedAssetPrefix(undefined)).toBe("");
+    expect(validatedAssetPrefix("")).toBe("");
+    // Next.js accepts "/" as an effectively empty prefix rather than erroring.
+    expect(validatedAssetPrefix("/")).toBe("");
+    expect(validatedAssetPrefix("/assets")).toBe("/assets");
+    expect(validatedAssetPrefix("/assets/")).toBe("/assets");
+  });
+
+  it("rejects full-URL prefixes and non-slash paths", () => {
+    expect(() => validatedAssetPrefix("https://cdn.example.com")).toThrow(
+      /full-URL assetPrefix/,
+    );
+    expect(() => validatedAssetPrefix("assets")).toThrow(/must start with a slash/);
   });
 });

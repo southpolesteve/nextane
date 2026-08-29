@@ -89,7 +89,7 @@ function validatedBasePath(value: unknown): string {
   return value;
 }
 
-function validatedAssetPrefix(value: unknown): string {
+export function validatedAssetPrefix(value: unknown): string {
   if (value === undefined || value === "") return "";
   if (typeof value !== "string") {
     throw new Error(
@@ -104,6 +104,8 @@ function validatedAssetPrefix(value: unknown): string {
     );
   }
   const trimmed = value.endsWith("/") ? value.slice(0, -1) : value;
+  // Next.js accepts assetPrefix "/" as an effectively empty (no-op) prefix.
+  if (trimmed === "") return "";
   if (!trimmed.startsWith("/")) {
     throw new Error(
       `[nextane] assetPrefix must start with a slash, got ${JSON.stringify(value)}`,

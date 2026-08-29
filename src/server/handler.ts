@@ -1405,8 +1405,9 @@ function canonicalStaticRequest(
   pageUrl: URL,
   request: Request,
   onlyCached = false,
+  canonicalPathname = pageUrl.pathname,
 ): Request {
-  const canonicalUrl = new URL(pageUrl.pathname, "https://nextane.internal");
+  const canonicalUrl = new URL(canonicalPathname, "https://nextane.internal");
   const headers = new Headers();
   if (onlyCached) headers.set("x-nextane-only-cached", "1");
   return new Request(canonicalUrl, {
@@ -1506,11 +1507,21 @@ async function loadArtifact(
   const usesRequestInitialProps =
     usesStaticProps && (await manifestUsesRequestInitialProps(manifest));
   const canUseSharedArtifact = usesStaticProps && !usesRequestInitialProps;
+  const i18n = manifest.config?.i18n ?? null;
+  // The shared-artifact cache key is per-locale (non-default locales carry a
+  // `/{locale}` prefix), while the rendered artifact's page URL — and thus its
+  // asPath and resolvedPath — stays locale-stripped, matching Next.js. Without
+  // the per-locale key, `/en/about` and `/fr/about` would collide on one
+  // artifact and every locale would be served the default-locale content.
+  const cacheKeyPathname =
+    i18n && locale && locale !== i18n.defaultLocale
+      ? addLocalePrefix(pageUrl.pathname, locale)
+      : pageUrl.pathname;
   const artifactRequest = canUseSharedArtifact
-    ? canonicalStaticRequest(pageUrl, request)
+    ? canonicalStaticRequest(pageUrl, request, false, cacheKeyPathname)
     : request;
   const artifactPageUrl = canUseSharedArtifact
-    ? new URL(artifactRequest.url)
+    ? new URL(pageUrl.pathname, "https://nextane.internal")
     : pageUrl;
   const artifactDisplayUrl = canUseSharedArtifact
     ? artifactPageUrl
@@ -1530,7 +1541,7 @@ async function loadArtifact(
       ) {
         if (options.loadCachedArtifact && canUseSharedArtifact) {
           const response = await options.loadCachedArtifact(
-            canonicalStaticRequest(pageUrl, request, true),
+            canonicalStaticRequest(pageUrl, request, true, cacheKeyPathname),
             route,
           );
           if (response.ok) {
@@ -1613,9 +1624,19 @@ async function loadArtifact(
 export function createIsrArtifactHandler(manifest: NextaneManifest) {
   return async function handleIsrArtifact(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const i18n = manifest.config?.i18n ?? null;
+    // The per-locale cache key may carry a `/{locale}` prefix; resolve it back
+    // to the locale-stripped route path and render with that locale's context.
+    let locale = i18n?.defaultLocale;
+    let routePathname = url.pathname;
+    if (i18n) {
+      const resolution = resolveLocale(url.pathname, i18n);
+      locale = resolution.locale;
+      routePathname = resolution.pathname;
+    }
     const match = matchRoute(
       manifest.routes.filter((route) => route.kind === "page"),
-      url.pathname,
+      routePathname,
     );
     if (!match) return new Response("ISR route not found", { status: 404 });
     if (!(await routeUsesStaticProps(match.route))) {
@@ -1634,13 +1655,23 @@ export function createIsrArtifactHandler(manifest: NextaneManifest) {
       return new Response("ISR artifact not cached", { status: 404 });
     }
 
-    const artifactRequest = canonicalStaticRequest(url, request);
+    const artifactRequest = canonicalStaticRequest(
+      new URL(routePathname, "https://nextane.internal"),
+      request,
+    );
     const artifact = await createRenderArtifact(
       manifest,
       match.route,
       artifactRequest,
       match.params,
       new URL(artifactRequest.url),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      false,
+      DISABLED_PREVIEW,
+      locale,
     );
     const revalidate =
       artifact.revalidate === true
@@ -1888,11 +1919,27 @@ export function createNextaneHandler(
           localizedPathname,
         );
         if (redirected) {
-          if (redirected.internal && redirected.rule.basePath !== false) {
-            redirected.location.pathname = addBasePath(
-              redirected.location.pathname,
-              basePath,
-            );
+          if (redirected.internal) {
+            // Next.js preserves the active locale on internal redirects unless
+            // the rule opts out with `locale: false`; the default locale stays
+            // unprefixed. The locale prefix sits inside the basePath prefix.
+            if (
+              i18n &&
+              locale &&
+              locale !== i18n.defaultLocale &&
+              redirected.rule.locale !== false
+            ) {
+              redirected.location.pathname = addLocalePrefix(
+                redirected.location.pathname,
+                locale,
+              );
+            }
+            if (redirected.rule.basePath !== false) {
+              redirected.location.pathname = addBasePath(
+                redirected.location.pathname,
+                basePath,
+              );
+            }
           }
           return new Response(null, {
             status: redirectStatusFor(redirected.rule),
@@ -1931,10 +1978,17 @@ export function createNextaneHandler(
         basePath,
         hadBasePath,
       );
-      // beforeFiles/afterFiles rewrites run before route matching; `fallback`
-      // rewrites only fire when no page/route matched (Next.js phase order).
-      const preRouteRewrites = activeRewrites.filter(
-        (rewrite) => rewrite.phase !== "fallback",
+      // Next.js phase order: `beforeFiles` rewrites run before route matching;
+      // `afterFiles` rewrites fire only when no page matched (a real page wins
+      // over an afterFiles rewrite); `fallback` rewrites run last, after the
+      // afterFiles phase also missed.
+      const beforeFilesRewrites = activeRewrites.filter(
+        (rewrite) => rewrite.phase === "beforeFiles",
+      );
+      const afterFilesRewrites = activeRewrites.filter(
+        // Array-form rewrites default to `afterFiles`; an untagged rule (a
+        // hand-built manifest that skipped sanitization) follows that default.
+        (rewrite) => rewrite.phase === "afterFiles" || rewrite.phase === undefined,
       );
       const fallbackRewrites = activeRewrites.filter(
         (rewrite) => rewrite.phase === "fallback",
@@ -1990,12 +2044,22 @@ export function createNextaneHandler(
         );
       }
       if (dataPath) {
+        // i18n embeds the locale in every data href
+        // (`/_next/data/BUILD/{locale}/about.json`, default locale included),
+        // so resolve it off the data path to get the route and locale context.
+        let dataLocale = locale;
+        let routeDataPath = dataPath;
+        if (i18n) {
+          const resolution = resolveLocale(dataPath, i18n);
+          dataLocale = resolution.locale;
+          routeDataPath = resolution.pathname;
+        }
         const match = matchRoute(
           manifest.routes.filter((route) => route.kind === "page"),
-          dataPath,
+          routeDataPath,
         );
         if (!match) return Response.json({ notFound: true }, { status: 404 });
-        const pageUrl = new URL(dataPath, request.url);
+        const pageUrl = new URL(routeDataPath, request.url);
         pageUrl.search = url.search;
         const { artifact, cacheStatus } = await loadArtifact(
           manifest,
@@ -2008,7 +2072,7 @@ export function createNextaneHandler(
           pageUrl,
           pageUrl,
           previewState,
-          locale,
+          dataLocale,
         );
         if (artifact.response?.ended) {
           const responseHeaders = new Headers(artifact.response.headers);
@@ -2059,7 +2123,7 @@ export function createNextaneHandler(
       let routing =
         presetRouting ??
         resolveRewrite(
-          preRouteRewrites,
+          beforeFilesRewrites,
           routingUrl,
           ruleContext,
           localizedPathname,
@@ -2080,8 +2144,31 @@ export function createNextaneHandler(
           );
           if (asset.status !== 404) return asset;
         }
-        // No route matched: try the `fallback` rewrite phase.
-        if (fallbackRewrites.length > 0) {
+        // `afterFiles` rewrites run only now, after no page matched, so a real
+        // page always wins over an afterFiles rewrite (Next.js phase order).
+        if (!presetRouting && afterFilesRewrites.length > 0) {
+          const afterFiles = resolveRewrite(
+            afterFilesRewrites,
+            routingUrl,
+            ruleContext,
+            localizedPathname,
+          );
+          if (afterFiles.external) {
+            return proxyExternalRewrite(request, afterFiles.external);
+          }
+          if (afterFiles.matched) {
+            const afterMatch = matchRoute(
+              manifest.routes,
+              afterFiles.pageUrl.pathname,
+            );
+            if (afterMatch) {
+              match = afterMatch;
+              routing = afterFiles;
+            }
+          }
+        }
+        // Still no route matched: try the `fallback` rewrite phase.
+        if (!match && fallbackRewrites.length > 0) {
           const fallback = resolveRewrite(
             fallbackRewrites,
             routingUrl,
@@ -2226,11 +2313,29 @@ export function createNextaneHandler(
     );
     if (headerRules.length > 0 && response.status !== 101) {
       const url = new URL(sanitized.url);
-      const applied = matchHeaderRules(headerRules, url.pathname, {
-        url,
-        headers: sanitized.headers,
-        cookies,
-      });
+      // i18n: match non-`locale:false` header rules against the locale-stripped
+      // path (Next applies them across all locales), and `locale:false` rules
+      // against the locale-included path.
+      let headerPathname = url.pathname;
+      let localizedPathname = url.pathname;
+      if (i18n && !url.pathname.startsWith("/_next/")) {
+        const resolution = resolveLocale(url.pathname, i18n);
+        headerPathname = resolution.pathname;
+        localizedPathname = addLocalePrefix(
+          resolution.pathname,
+          resolution.locale,
+        );
+      }
+      const applied = matchHeaderRules(
+        headerRules,
+        headerPathname,
+        {
+          url,
+          headers: sanitized.headers,
+          cookies,
+        },
+        localizedPathname,
+      );
       if (applied.length > 0) {
         const headers = new Headers(response.headers);
         for (const header of applied) {
