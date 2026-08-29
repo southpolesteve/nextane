@@ -393,6 +393,7 @@ async function resolvePageData(
   pageUrl: URL,
   resolvedUrl: URL,
   displayUrl: URL,
+  routePath: string,
   response: PageResponse,
   skipPageInitialProps: boolean,
   preview: PreviewState = DISABLED_PREVIEW,
@@ -414,7 +415,10 @@ async function resolvePageData(
     const context: GetServerSidePropsContext = {
       req,
       res: response,
-      params: Object.keys(params).length > 0 ? params : undefined,
+      // Next passes `params` for any dynamic route, even when it matched zero
+      // segments (e.g. an optional catch-all at its root), and omits it for a
+      // static route.
+      params: routePath.includes("[") ? params : undefined,
       query,
       resolvedUrl: `${resolvedUrl.pathname}${resolvedUrl.search}`,
       ...previewContext,
@@ -513,7 +517,9 @@ async function resolvePageData(
     | undefined;
   if (!skipPageInitialProps && typeof component?.getInitialProps === "function") {
     const pageProps = await component.getInitialProps({
-      pathname: pageUrl.pathname,
+      // `ctx.pathname` is the matched route pattern (e.g. `/items/[slug]`), not
+      // the concrete request path; `asPath` carries the concrete URL.
+      pathname: routePath,
       query,
       asPath: `${displayUrl.pathname}${displayUrl.search}`,
       req,
@@ -866,6 +872,7 @@ async function createRenderArtifact(
         pageUrl,
         resolvedUrl,
         displayUrl,
+        route.route,
         response,
         typeof App?.getInitialProps === "function",
         preview,
@@ -895,9 +902,14 @@ async function createRenderArtifact(
     if (initial && typeof initial === "object") {
       appProps = { ...(initial as Record<string, unknown>) };
     }
-    if (!resolution.gsp && !resolution.gssp && "pageProps" in appProps) {
-      resolution.pageProps =
+    if ("pageProps" in appProps) {
+      // Next merges the App-provided pageProps with the page's data-function
+      // props, with the data props winning on key collisions. For a
+      // getInitialProps page (no gSP/gSSP) the page props flow through the App,
+      // so this reduces to the App-provided pageProps.
+      const appPageProps =
         (appProps.pageProps as Record<string, unknown> | undefined) ?? {};
+      resolution.pageProps = { ...appPageProps, ...resolution.pageProps };
     }
     delete appProps.pageProps;
     resolution.response = response.snapshot();
