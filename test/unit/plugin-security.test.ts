@@ -62,6 +62,36 @@ describe("client build security", () => {
     expect(transformed).not.toContain("serverCanary");
   });
 
+  it("keeps a non-exported local that shares a reserved server-export name", async () => {
+    const transformed = await createClientPageSource(
+      `
+        const config = { pageSize: 20 };
+        export default function Page({ items }) {
+          return <ul>{items.slice(0, config.pageSize)}</ul>;
+        }
+      `,
+      "reserved-local.tsrx",
+    );
+    // The local `config` (not an export) must survive so the component works.
+    expect(transformed).toContain("const config = { pageSize: 20 }");
+    expect(transformed).toContain("config.pageSize");
+  });
+
+  it("still strips an exported config from the client bundle", async () => {
+    const transformed = await createClientPageSource(
+      `
+        export const config = { runtime: "edge", secretFlag: "SERVER_ONLY" };
+        export default function Page() {
+          return <p>hi</p>;
+        }
+      `,
+      "exported-config.tsrx",
+    );
+    expect(transformed).not.toContain("SERVER_ONLY");
+    expect(transformed).not.toContain("runtime");
+    expect(transformed).toContain("default function Page");
+  });
+
   it("preserves a default re-export while dropping a server re-export", async () => {
     const transformed = await createClientPageSource(
       `
