@@ -2137,24 +2137,28 @@ export function createNextaneHandler(
       // but never a static page.
       const matchedStaticPage = !!match && match.route.params.length === 0;
       if (!matchedStaticPage && !presetRouting && afterFilesRewrites.length > 0) {
+        // afterFiles operates on the path as it stands after the beforeFiles
+        // phase (Next.js chains the phases), so resolve against the
+        // beforeFiles-rewritten path when one actually fired.
+        const afterBaseUrl = routing.matched ? routing.pageUrl : routingUrl;
+        const afterLocalized = routing.matched
+          ? routing.pageUrl.pathname
+          : localizedPathname;
         const afterFiles = resolveRewrite(
           afterFilesRewrites,
-          routingUrl,
+          afterBaseUrl,
           ruleContext,
-          localizedPathname,
+          afterLocalized,
         );
         if (afterFiles.external) {
           return proxyExternalRewrite(request, afterFiles.external);
         }
         if (afterFiles.matched) {
-          const afterMatch = matchRoute(
-            manifest.routes,
-            afterFiles.pageUrl.pathname,
-          );
-          if (afterMatch) {
-            match = afterMatch;
-            routing = afterFiles;
-          }
+          // A fired afterFiles rewrite consumes the request: adopt its
+          // destination even when that resolves to no route, so the request
+          // 404s rather than falling back to the pre-rewrite dynamic match.
+          match = matchRoute(manifest.routes, afterFiles.pageUrl.pathname);
+          routing = afterFiles;
         }
       }
       if (!match) {
@@ -2317,16 +2321,13 @@ export function createNextaneHandler(
       const url = new URL(sanitized.url);
       // i18n: match non-`locale:false` header rules against the locale-stripped
       // path (Next applies them across all locales), and `locale:false` rules
-      // against the locale-included path.
+      // against the actual request path (`url.pathname`) — which already carries
+      // the locale prefix for non-default locales and stays unprefixed for the
+      // default locale, exactly as the request URL does.
       let headerPathname = url.pathname;
-      let localizedPathname = url.pathname;
+      const localizedPathname = url.pathname;
       if (i18n && !url.pathname.startsWith("/_next/")) {
-        const resolution = resolveLocale(url.pathname, i18n);
-        headerPathname = resolution.pathname;
-        localizedPathname = addLocalePrefix(
-          resolution.pathname,
-          resolution.locale,
-        );
+        headerPathname = resolveLocale(url.pathname, i18n).pathname;
       }
       const applied = matchHeaderRules(
         headerRules,
