@@ -398,7 +398,11 @@ export async function createClientPageSource(
 
   const edits: TextEdit[] = [];
   const serverRoots: AstNode[] = [];
-  const serverBindings = new Set(SERVER_PAGE_EXPORTS);
+  // Only names actually EXPORTED as server page exports are stripped; the loop
+  // below populates this. Seeding it with every SERVER_PAGE_EXPORTS name would
+  // wrongly strip a non-exported local that merely shares a reserved name
+  // (e.g. `const config = ...` used by the component).
+  const serverBindings = new Set<string>();
   const body = moduleBody(program);
 
   for (const statement of body) {
