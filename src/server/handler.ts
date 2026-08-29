@@ -2320,14 +2320,16 @@ export function createNextaneHandler(
     if (headerRules.length > 0 && response.status !== 101) {
       const url = new URL(sanitized.url);
       // i18n: match non-`locale:false` header rules against the locale-stripped
-      // path (Next applies them across all locales), and `locale:false` rules
-      // against the actual request path (`url.pathname`) — which already carries
-      // the locale prefix for non-default locales and stays unprefixed for the
-      // default locale, exactly as the request URL does.
+      // path (Next applies them across all locales). `locale:false` rules match
+      // against the locale-inserted path — the default locale is inserted even
+      // for an unprefixed request — so a `:locale`-spelling source matches every
+      // locale, exactly as Next's `processRoutes` builds these rules.
       let headerPathname = url.pathname;
-      const localizedPathname = url.pathname;
+      let localizedPathname = url.pathname;
       if (i18n && !url.pathname.startsWith("/_next/")) {
-        headerPathname = resolveLocale(url.pathname, i18n).pathname;
+        const resolution = resolveLocale(url.pathname, i18n);
+        headerPathname = resolution.pathname;
+        localizedPathname = addLocalePrefix(resolution.pathname, resolution.locale);
       }
       const applied = matchHeaderRules(
         headerRules,
