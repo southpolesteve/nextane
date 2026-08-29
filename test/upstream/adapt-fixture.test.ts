@@ -112,6 +112,60 @@ describe("upstream fixture adaptation", () => {
     expect(html).toContain('<div id="__next"></div>');
   });
 
+  it("applies the basepath overlays and next/error replacement", async () => {
+    const root = await fixture({
+      "pages/invalid-manual-basepath.js":
+        "export default () => <a id=\"other-page-link\">x</a>\n",
+      "pages/absolute-url-basepath.js": "export default () => <p>a</p>\n",
+      "pages/external-and-back.js": "export default () => <p>b</p>\n",
+      "pages/404.js":
+        "import NextError from 'next/error'\nexport default () => <NextError statusCode={404} />\n",
+      "pages/_app.js":
+        "export default function App({ Component, pageProps }) { return <Component {...pageProps} /> }\n",
+    });
+
+    const report = await adaptFixture({ root, nextaneRoot });
+
+    expect(report.profile).toBe("basepath");
+    expect(report.overlays).toEqual(["pages/404.tsrx", "pages/_app.tsrx"]);
+    expect(report.warmupPaths).toEqual(["/docs"]);
+    const notFound = await fs.readFile(
+      path.join(root, "pages", "404.tsrx"),
+      "utf8",
+    );
+    expect(notFound).toContain("This page could not be found.");
+    expect(notFound).not.toContain("from 'next/error'");
+    const app = await fs.readFile(path.join(root, "pages", "_app.tsrx"), "utf8");
+    expect(app).toContain("routeChangeError");
+    expect(app).toContain("router.events");
+  });
+
+  it("translates the i18n-fallback-collision config to an overlay", async () => {
+    const root = await fixture({
+      "pages/index.tsx": "export default () => <p>index page</p>\n",
+      "pages/[first]/index.js":
+        "export default () => <p>/[first]</p>\nexport const getStaticProps = () => ({ props: {} })\nexport const getStaticPaths = () => ({ paths: [], fallback: false })\n",
+      "pages/[first]/[second]/index.js":
+        "export default () => <p>/[first]/[second]</p>\n",
+      "pages/[first]/[second]/[third]/index.js":
+        "export default () => <p>x</p>\n",
+      "pages/[first]/[second]/[third]/[fourth]/index.js":
+        "export default () => <p>x</p>\n",
+      "next.config.ts":
+        "export default { i18n: { defaultLocale: 'en', locales: ['en', 'es'] } }\n",
+    });
+
+    const report = await adaptFixture({ root, nextaneRoot });
+
+    expect(report.profile).toBe("i18n-fallback-collision");
+    expect(report.overlays).toEqual(["next.config.js"]);
+    const overlaid = await fs.readFile(
+      path.join(root, "next.config.js"),
+      "utf8",
+    );
+    expect(overlaid).toContain('locales: ["en", "es"]');
+  });
+
   it("fails closed for a fixture outside the smoke allowlist", async () => {
     const root = await fixture({
       "pages/index.js": "export default () => <p>unknown</p>\n",

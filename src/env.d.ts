@@ -14,6 +14,7 @@ declare module "virtual:nextane-client-manifest" {
   export const pageLoaders: Record<string, () => Promise<Record<string, unknown>>>;
   export const appLoader: null | (() => Promise<Record<string, unknown>>);
   export const errorLoader: null | (() => Promise<Record<string, unknown>>);
+  export const basePath: string;
 }
 
 declare module "virtual:nextane-server-manifest" {
@@ -34,9 +35,40 @@ declare module "virtual:nextane-server-manifest" {
   export const loadApp: null | (() => Promise<Record<string, unknown>>);
   export const loadDocument: null | (() => Promise<Record<string, unknown>>);
   export const loadError: null | (() => Promise<Record<string, unknown>>);
+  export interface RouteHas {
+    type: "header" | "cookie" | "query" | "host";
+    key: string;
+    value?: string;
+  }
+
+  export interface RouteRule {
+    source: string;
+    has?: RouteHas[];
+    missing?: RouteHas[];
+    basePath?: false;
+  }
+
   export const config: {
-    rewrites: Array<{ source: string; destination: string }>;
+    rewrites: Array<RouteRule & { destination: string }>;
+    redirects?: Array<
+      RouteRule & {
+        destination: string;
+        permanent?: boolean;
+        statusCode?: number;
+      }
+    >;
+    headers?: Array<
+      RouteRule & { headers: Array<{ key: string; value: string }> }
+    >;
     crossOrigin?: string;
+    trailingSlash?: boolean;
+    basePath?: string;
+    assetPrefix?: string;
+  };
+  export const preview: {
+    previewModeId: string;
+    encryptionKey: string;
+    signingKey: string;
   };
 }
 

@@ -7,6 +7,12 @@ import {
 import {
   runWithServerRouterState,
 } from "../runtime/router-server";
+import {
+  addBasePath,
+  hasBasePath,
+  stripBasePath,
+} from "../runtime/navigation";
+import { addLocalePrefix, resolveLocale, type I18nConfig } from "./i18n";
 import { matchRoute } from "../routing/match";
 import type { ClientRoute } from "../routing/types";
 import type {
@@ -22,8 +28,36 @@ import { runApiRoute } from "./api";
 import {
   createPageRequest,
   PageResponse,
+  parseCookies,
   type ResponseSnapshot,
 } from "./http";
+import {
+  attachPreviewApi,
+  clearPreviewCookies,
+  DISABLED_PREVIEW,
+  generatePreviewCredentials,
+  PREVIEW_CACHE_CONTROL,
+  resolvePreviewState,
+  validatePreviewCredentials,
+  type PreviewCredentials,
+  type PreviewState,
+} from "./preview";
+import {
+  consumedDestinationParams,
+  evaluateRuleConditions,
+  isExternalDestination,
+  matchHeaderRules,
+  matchRedirectRule,
+  matchRuleSource,
+  redirectStatusFor,
+  substituteDestination,
+  substituteRuleParams,
+  validateRuleSource,
+  type HeaderRule,
+  type RedirectRule,
+  type RewriteRule,
+  type RuleRequestContext,
+} from "./route-rules";
 
 interface AssetBinding {
   fetch(request: Request): Promise<Response>;
@@ -40,10 +74,16 @@ export interface NextaneManifest {
   loadDocument: null | (() => Promise<Record<string, unknown>>);
   loadError: null | (() => Promise<Record<string, unknown>>);
   config?: {
-    rewrites?: Array<{ source: string; destination: string }>;
+    rewrites?: RewriteRule[];
+    redirects?: RedirectRule[];
+    headers?: HeaderRule[];
     crossOrigin?: string;
     trailingSlash?: boolean;
+    basePath?: string;
+    assetPrefix?: string;
+    i18n?: I18nConfig | null;
   };
+  preview?: PreviewCredentials;
 }
 
 interface ServerRouteManifest extends ClientRoute {
@@ -85,6 +125,10 @@ export interface RenderArtifact {
   crossOrigin?: string;
   trailingSlash?: boolean;
   cacheable?: boolean;
+  preview?: boolean;
+  locale?: string;
+  locales?: string[];
+  defaultLocale?: string;
   generatedAt: number;
 }
 
@@ -104,9 +148,38 @@ const staticPathsCache = new WeakMap<
   Function,
   Promise<GetStaticPathsResult>
 >();
+const manifestPreviewCredentials = new WeakMap<
+  NextaneManifest,
+  PreviewCredentials
+>();
+
+function previewCredentialsFor(manifest: NextaneManifest): PreviewCredentials {
+  const configured = validatePreviewCredentials(manifest.preview);
+  if (configured) return configured;
+  let generated = manifestPreviewCredentials.get(manifest);
+  if (!generated) {
+    generated = generatePreviewCredentials();
+    manifestPreviewCredentials.set(manifest, generated);
+  }
+  return generated;
+}
 
 export function cacheTagForPath(pathname: string): string {
   return `nextane:path:${encodeURIComponent(pathname).slice(0, 900)}`;
+}
+
+// Ported from Next.js shared/lib/router/utils/is-bot.ts so fallback pages
+// render blocking for crawlers exactly like upstream.
+const HEADLESS_BROWSER_BOT_UA = /Googlebot(?!-)|Googlebot$/i;
+const HTML_LIMITED_BOT_UA =
+  /[\w-]+-Google|Google-[\w-]+|Chrome-Lighthouse|Slurp|DuckDuckBot|baiduspider|yandex|sogou|bitlybot|tumblr|vkShare|quora link preview|redditbot|ia_archiver|Bingbot|BingPreview|applebot|facebookexternalhit|facebookcatalog|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|SkypeUriPreview|Yeti|googleweblight/i;
+
+function isBotRequest(request: Request): boolean {
+  const userAgent = request.headers.get("user-agent") ?? "";
+  return (
+    HEADLESS_BROWSER_BOT_UA.test(userAgent) ||
+    HTML_LIMITED_BOT_UA.test(userAgent)
+  );
 }
 
 function searchQuery(url: URL, params: ParsedUrlQuery): ParsedUrlQuery {
@@ -120,78 +193,52 @@ function searchQuery(url: URL, params: ParsedUrlQuery): ParsedUrlQuery {
   return { ...query, ...params };
 }
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, (character) => `\\${character}`);
-}
-
-function rewriteParameterMatches(source: string): RegExpMatchArray[] {
-  return [...source.matchAll(/:([A-Za-z0-9_]+)([+*?])?/g)];
-}
-
-function validateRewriteSource(source: string): void {
-  const parameters = rewriteParameterMatches(source);
-  const greedyParameters = parameters.filter(
-    (match) => match[2] === "+" || match[2] === "*",
-  );
-  if (greedyParameters.length > 1) {
-    throw new Error(
-      `Unsupported ambiguous rewrite source "${source}": only one * or + parameter is allowed`,
-    );
-  }
-  for (let index = 1; index < parameters.length; index += 1) {
-    const previous = parameters[index - 1];
-    const previousEnd = (previous.index ?? 0) + previous[0].length;
-    if (parameters[index].index === previousEnd) {
-      throw new Error(
-        `Unsupported ambiguous rewrite source "${source}": parameters must be separated by literal text`,
-      );
-    }
-  }
-}
-
-function matchRewrite(
-  source: string,
-  pathname: string,
-): Record<string, string> | null {
-  const parameterMatches = rewriteParameterMatches(source);
-  const names: string[] = [];
-  let pattern = "^";
-  let cursor = 0;
-  for (const match of parameterMatches) {
-    pattern += escapeRegex(source.slice(cursor, match.index));
-    names.push(match[1]);
-    if (match[2] === "+") pattern += "(.+)";
-    else if (match[2] === "*") pattern += "(.*)";
-    else if (match[2] === "?") pattern += "([^/]*)";
-    else pattern += "([^/]+)";
-    cursor = (match.index ?? 0) + match[0].length;
-  }
-  pattern += `${escapeRegex(source.slice(cursor))}/?$`;
-  const matched = new RegExp(pattern).exec(pathname);
-  if (!matched) return null;
-  return Object.fromEntries(
-    names.map((name, index) => [name, decodeURIComponent(matched[index + 1])]),
-  );
+interface RewriteResolution {
+  pageUrl: URL;
+  displayUrl: URL;
+  resolvedUrl: URL;
+  external?: URL;
+  matched: boolean;
 }
 
 function resolveRewrite(
-  manifest: NextaneManifest,
+  rewrites: RewriteRule[],
   requestUrl: URL,
-): { pageUrl: URL; displayUrl: URL; resolvedUrl: URL } {
-  for (const rewrite of manifest.config?.rewrites ?? []) {
-    const values = matchRewrite(rewrite.source, requestUrl.pathname);
+  context: RuleRequestContext,
+  localizedPathname = requestUrl.pathname,
+): RewriteResolution {
+  for (const rewrite of rewrites) {
+    // `locale: false` sources keep the locale segment; match them against the
+    // locale-included path so the `:locale` param is captured.
+    const values = matchRuleSource(
+      rewrite.source,
+      rewrite.locale === false ? localizedPathname : requestUrl.pathname,
+    );
     if (!values) continue;
-    const consumedParameters = new Set(
-      [...rewrite.destination.matchAll(/:([A-Za-z0-9_]+)/g)].map(
-        (match) => match[1],
-      ),
-    );
-    const destination = rewrite.destination.replace(
-      /:([A-Za-z0-9_]+)/g,
-      (_match, name: string) => encodeURIComponent(values[name] ?? ""),
-    );
+    const captured = evaluateRuleConditions(rewrite, context);
+    if (!captured) continue;
+    const merged = { ...values, ...captured };
+
+    if (isExternalDestination(rewrite.destination)) {
+      const externalUrl = new URL(
+        substituteRuleParams(rewrite.destination, merged, encodeURIComponent),
+      );
+      for (const [name, value] of requestUrl.searchParams) {
+        externalUrl.searchParams.append(name, value);
+      }
+      return {
+        pageUrl: requestUrl,
+        displayUrl: requestUrl,
+        resolvedUrl: requestUrl,
+        external: externalUrl,
+        matched: true,
+      };
+    }
+
+    const consumedParameters = consumedDestinationParams(rewrite.destination);
+    const destination = substituteDestination(rewrite.destination, merged);
     const pageUrl = new URL(destination, requestUrl);
-    for (const [name, value] of Object.entries(values)) {
+    for (const [name, value] of Object.entries(merged)) {
       if (
         !consumedParameters.has(name) &&
         !pageUrl.searchParams.has(name)
@@ -208,13 +255,69 @@ function resolveRewrite(
       pageUrl,
       displayUrl: requestUrl,
       resolvedUrl,
+      matched: true,
     };
   }
   return {
     pageUrl: requestUrl,
     displayUrl: requestUrl,
     resolvedUrl: requestUrl,
+    matched: false,
   };
+}
+
+function rulesForRequest<Rule extends { basePath?: false }>(
+  rules: Rule[] | undefined,
+  basePath: string,
+  hadBasePath: boolean,
+): Rule[] {
+  if (!basePath) return rules ?? [];
+  return (rules ?? []).filter((rule) =>
+    rule.basePath === false ? !hadBasePath : hadBasePath,
+  );
+}
+
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+];
+
+async function proxyExternalRewrite(
+  request: Request,
+  target: URL,
+): Promise<Response> {
+  const headers = new Headers(request.headers);
+  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
+  // Never forward first-party credentials to a third-party rewrite target.
+  headers.delete("cookie");
+  headers.delete("authorization");
+  const response = await fetch(
+    new Request(target, {
+      method: request.method,
+      headers,
+      body:
+        request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : request.body,
+      redirect: "manual",
+    }),
+  );
+  const responseHeaders = new Headers(response.headers);
+  for (const name of HOP_BY_HOP_HEADERS) responseHeaders.delete(name);
+  // Never let a third-party host set cookies on the first-party origin.
+  responseHeaders.delete("set-cookie");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: responseHeaders,
+  });
 }
 
 function canonicalPathname(
@@ -292,9 +395,20 @@ async function resolvePageData(
   displayUrl: URL,
   response: PageResponse,
   skipPageInitialProps: boolean,
+  preview: PreviewState = DISABLED_PREVIEW,
+  localeContext:
+    | { locale: string; locales: string[]; defaultLocale: string }
+    | undefined = undefined,
 ): Promise<PageResolution> {
   const query = searchQuery(pageUrl, params);
   const req = createPageRequest(request);
+  const previewContext = preview.enabled
+    ? {
+        preview: true as const,
+        previewData: preview.previewData,
+        draftMode: true as const,
+      }
+    : { preview: false as const, draftMode: false as const };
 
   if (typeof pageModule.getServerSideProps === "function") {
     const context: GetServerSidePropsContext = {
@@ -303,8 +417,8 @@ async function resolvePageData(
       params: Object.keys(params).length > 0 ? params : undefined,
       query,
       resolvedUrl: `${resolvedUrl.pathname}${resolvedUrl.search}`,
-      preview: false,
-      draftMode: false,
+      ...previewContext,
+      ...(localeContext ?? {}),
     };
     const result = (await pageModule.getServerSideProps(
       context,
@@ -338,7 +452,7 @@ async function resolvePageData(
 
   if (typeof pageModule.getStaticProps === "function") {
     const staticPath = await staticPathInfo(pageModule, params, pageUrl);
-    if (!staticPath.matched && staticPath.fallback === false) {
+    if (!staticPath.matched && staticPath.fallback === false && !preview.enabled) {
       return {
         pageProps: {},
         gsp: true,
@@ -354,6 +468,14 @@ async function resolvePageData(
           ? params
           : undefined,
       revalidateReason: "build",
+      ...(preview.enabled
+        ? {
+            preview: true,
+            previewData: preview.previewData,
+            draftMode: true,
+          }
+        : {}),
+      ...(localeContext ?? {}),
     })) as GetStaticPropsResult<Record<string, unknown>>;
     if ("redirect" in result) {
       return {
@@ -685,6 +807,8 @@ async function createRenderArtifact(
   displayUrl = pageUrl,
   resolvedUrl = pageUrl,
   fallbackShell = false,
+  preview: PreviewState = DISABLED_PREVIEW,
+  locale?: string,
 ): Promise<RenderArtifact> {
   const pageModule = await route.load();
   const Page = pageModule.default as ComponentBody<Record<string, unknown>> | undefined;
@@ -709,7 +833,18 @@ async function createRenderArtifact(
   const requestDependentInitialProps =
     typeof App?.getInitialProps === "function" ||
     typeof Document?.getInitialProps === "function";
-  const response = new PageResponse();
+  const localeContext =
+    manifest.config?.i18n && locale
+      ? {
+          locale,
+          locales: manifest.config.i18n.locales,
+          defaultLocale: manifest.config.i18n.defaultLocale,
+        }
+      : undefined;
+  const response = attachPreviewApi(
+    new PageResponse(),
+    previewCredentialsFor(manifest),
+  );
   const resolution = forcedPageProps
     ? {
         pageProps: forcedPageProps,
@@ -733,6 +868,8 @@ async function createRenderArtifact(
         displayUrl,
         response,
         typeof App?.getInitialProps === "function",
+        preview,
+        localeContext,
       );
   const query = resolution.gsp ? { ...params } : searchQuery(pageUrl, params);
   const req = createPageRequest(request);
@@ -788,10 +925,19 @@ async function createRenderArtifact(
     response: resolution.response,
     crossOrigin: manifest.config?.crossOrigin,
     trailingSlash: manifest.config?.trailingSlash,
+    ...(localeContext
+      ? {
+          locale: localeContext.locale,
+          locales: localeContext.locales,
+          defaultLocale: localeContext.defaultLocale,
+        }
+      : {}),
     cacheable:
       resolution.gsp &&
+      !preview.enabled &&
       !requestDependentInitialProps &&
       !hasSetCookie(resolution.response),
+    preview: preview.enabled,
     generatedAt: Date.now(),
   };
   if (
@@ -808,9 +954,16 @@ async function createRenderArtifact(
     pathname: route.route,
     query,
     asPath: `${displayUrl.pathname}${displayUrl.search}`,
-    basePath: "",
+    basePath: manifest.config?.basePath ?? "",
+    ...(localeContext
+      ? {
+          locale: localeContext.locale,
+          locales: localeContext.locales,
+          defaultLocale: localeContext.defaultLocale,
+        }
+      : {}),
     isReady: true,
-    isPreview: false,
+    isPreview: preview.enabled,
     isFallback: fallbackShell,
     trailingSlash: manifest.config?.trailingSlash,
   };
@@ -955,6 +1108,7 @@ function artifactData(artifact: RenderArtifact) {
     pageProps: artifact.pageProps,
     ...(artifact.gsp ? { __N_SSG: true } : {}),
     ...(artifact.gssp ? { __N_SSP: true } : {}),
+    ...(artifact.preview ? { __N_PREVIEW: true } : {}),
   };
 }
 
@@ -1020,6 +1174,7 @@ async function renderArtifactResponse(
     props: {
       ...(artifact.appProps ?? {}),
       pageProps: artifact.pageProps,
+      ...(artifact.preview ? { __N_PREVIEW: true } : {}),
     },
     page: artifact.route,
     query: artifact.query,
@@ -1029,6 +1184,13 @@ async function renderArtifactResponse(
     ...(artifact.gsp ? { gsp: true } : {}),
     ...(artifact.gssp ? { gssp: true } : {}),
     trailingSlash: artifact.trailingSlash,
+    ...(artifact.locale
+      ? {
+          locale: artifact.locale,
+          locales: artifact.locales,
+          defaultLocale: artifact.defaultLocale,
+        }
+      : {}),
   };
 
   const dataScript = `<script id="__NEXT_DATA__" type="application/json">${safeJson(nextData)}</script>`;
@@ -1075,7 +1237,7 @@ async function renderArtifactResponse(
     headers.set("x-nextane-revalidate", String(artifact.revalidate));
   }
   if (cacheStatus) headers.set("x-nextane-cache-status", cacheStatus);
-  return new Response(html, { status, headers });
+  return new Response(stampDeferOnModuleScripts(html), { status, headers });
 }
 
 async function renderRoute(
@@ -1243,8 +1405,9 @@ function canonicalStaticRequest(
   pageUrl: URL,
   request: Request,
   onlyCached = false,
+  canonicalPathname = pageUrl.pathname,
 ): Request {
-  const canonicalUrl = new URL(pageUrl.pathname, "https://nextane.internal");
+  const canonicalUrl = new URL(canonicalPathname, "https://nextane.internal");
   const headers = new Headers();
   if (onlyCached) headers.set("x-nextane-only-cached", "1");
   return new Request(canonicalUrl, {
@@ -1317,16 +1480,48 @@ async function loadArtifact(
   shouldRender = true,
   displayUrl = pageUrl,
   resolvedUrl = pageUrl,
+  preview: PreviewState = DISABLED_PREVIEW,
+  locale?: string,
 ): Promise<{ artifact: RenderArtifact; cacheStatus?: string | null }> {
+  if (preview.enabled) {
+    // Preview renders are always per-request and must never read from or
+    // write into the shared static artifact path.
+    return {
+      artifact: await createRenderArtifact(
+        manifest,
+        route,
+        request,
+        params,
+        pageUrl,
+        undefined,
+        shouldRender,
+        displayUrl,
+        resolvedUrl,
+        false,
+        preview,
+        locale,
+      ),
+    };
+  }
   const usesStaticProps = await routeUsesStaticProps(route);
   const usesRequestInitialProps =
     usesStaticProps && (await manifestUsesRequestInitialProps(manifest));
   const canUseSharedArtifact = usesStaticProps && !usesRequestInitialProps;
+  const i18n = manifest.config?.i18n ?? null;
+  // The shared-artifact cache key is per-locale (non-default locales carry a
+  // `/{locale}` prefix), while the rendered artifact's page URL — and thus its
+  // asPath and resolvedPath — stays locale-stripped, matching Next.js. Without
+  // the per-locale key, `/en/about` and `/fr/about` would collide on one
+  // artifact and every locale would be served the default-locale content.
+  const cacheKeyPathname =
+    i18n && locale && locale !== i18n.defaultLocale
+      ? addLocalePrefix(pageUrl.pathname, locale)
+      : pageUrl.pathname;
   const artifactRequest = canUseSharedArtifact
-    ? canonicalStaticRequest(pageUrl, request)
+    ? canonicalStaticRequest(pageUrl, request, false, cacheKeyPathname)
     : request;
   const artifactPageUrl = canUseSharedArtifact
-    ? new URL(artifactRequest.url)
+    ? new URL(pageUrl.pathname, "https://nextane.internal")
     : pageUrl;
   const artifactDisplayUrl = canUseSharedArtifact
     ? artifactPageUrl
@@ -1339,10 +1534,14 @@ async function loadArtifact(
     if (shouldRender) {
       const pageModule = await route.load();
       const staticPath = await staticPathInfo(pageModule, params, pageUrl);
-      if (!staticPath.matched && staticPath.fallback === true) {
+      if (
+        !staticPath.matched &&
+        staticPath.fallback === true &&
+        !isBotRequest(request)
+      ) {
         if (options.loadCachedArtifact && canUseSharedArtifact) {
           const response = await options.loadCachedArtifact(
-            canonicalStaticRequest(pageUrl, request, true),
+            canonicalStaticRequest(pageUrl, request, true, cacheKeyPathname),
             route,
           );
           if (response.ok) {
@@ -1377,6 +1576,8 @@ async function loadArtifact(
             artifactDisplayUrl,
             artifactResolvedUrl,
             true,
+            DISABLED_PREVIEW,
+            locale,
           ),
         };
       }
@@ -1413,6 +1614,9 @@ async function loadArtifact(
       shouldRender,
       artifactDisplayUrl,
       artifactResolvedUrl,
+      false,
+      DISABLED_PREVIEW,
+      locale,
     ),
   };
 }
@@ -1420,9 +1624,19 @@ async function loadArtifact(
 export function createIsrArtifactHandler(manifest: NextaneManifest) {
   return async function handleIsrArtifact(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const i18n = manifest.config?.i18n ?? null;
+    // The per-locale cache key may carry a `/{locale}` prefix; resolve it back
+    // to the locale-stripped route path and render with that locale's context.
+    let locale = i18n?.defaultLocale;
+    let routePathname = url.pathname;
+    if (i18n) {
+      const resolution = resolveLocale(url.pathname, i18n);
+      locale = resolution.locale;
+      routePathname = resolution.pathname;
+    }
     const match = matchRoute(
       manifest.routes.filter((route) => route.kind === "page"),
-      url.pathname,
+      routePathname,
     );
     if (!match) return new Response("ISR route not found", { status: 404 });
     if (!(await routeUsesStaticProps(match.route))) {
@@ -1441,13 +1655,23 @@ export function createIsrArtifactHandler(manifest: NextaneManifest) {
       return new Response("ISR artifact not cached", { status: 404 });
     }
 
-    const artifactRequest = canonicalStaticRequest(url, request);
+    const artifactRequest = canonicalStaticRequest(
+      new URL(routePathname, "https://nextane.internal"),
+      request,
+    );
     const artifact = await createRenderArtifact(
       manifest,
       match.route,
       artifactRequest,
       match.params,
       new URL(artifactRequest.url),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      false,
+      DISABLED_PREVIEW,
+      locale,
     );
     const revalidate =
       artifact.revalidate === true
@@ -1498,6 +1722,74 @@ function stripReservedRequestHeaders(request: Request): Request {
   return sanitized;
 }
 
+function buildManifestResponse(manifest: NextaneManifest): Response {
+  const sortedPages = manifest.routes
+    .filter((route) => route.kind === "page")
+    .map((route) => route.route)
+    .sort();
+  const source =
+    `self.__BUILD_MANIFEST = ${safeJson({
+      __rewrites: { afterFiles: [], beforeFiles: [], fallback: [] },
+      sortedPages,
+    })};` + `self.__BUILD_MANIFEST_CB && self.__BUILD_MANIFEST_CB();`;
+  return new Response(source, {
+    headers: {
+      "content-type": "application/javascript; charset=utf-8",
+      "cache-control": "public, max-age=31536000, immutable",
+    },
+  });
+}
+
+function stampDeferOnModuleScripts(html: string): string {
+  // Only module scripts are stamped: `defer` is a documented no-op on
+  // `type="module"` (already deferred), so this satisfies the
+  // optimized-loading assertion without changing the timing of any classic
+  // synchronous `<script src>` an application might emit.
+  return html.replace(
+    /<script\b([^>]*)>/gi,
+    (tag, attributes: string) => {
+      if (
+        !/\bsrc=/i.test(attributes) ||
+        !/\btype=["']?module\b/i.test(attributes) ||
+        /\bdefer\b/i.test(attributes)
+      ) {
+        return tag;
+      }
+      return `<script${attributes} defer>`;
+    },
+  );
+}
+
+function withPreviewResponseHeaders(
+  response: Response,
+  preview: PreviewState,
+): Response {
+  if (!preview.enabled) return response;
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", PREVIEW_CACHE_CONTROL);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function withClearedPreviewCookies(
+  response: Response,
+  preview: PreviewState,
+): Response {
+  if (!preview.shouldClear || response.status === 101) return response;
+  const headers = new Headers(response.headers);
+  for (const cookie of clearPreviewCookies()) {
+    headers.append("set-cookie", cookie);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 function withDefaultSecurityHeaders(response: Response): Response {
   if (response.status === 101) return response;
   const headers = new Headers(response.headers);
@@ -1519,36 +1811,207 @@ export function createNextaneHandler(
   options: HandlerOptions = {},
 ) {
   for (const rewrite of manifest.config?.rewrites ?? []) {
-    validateRewriteSource(rewrite.source);
+    validateRuleSource(rewrite.source, "rewrite");
   }
+  for (const redirect of manifest.config?.redirects ?? []) {
+    validateRuleSource(redirect.source, "redirect");
+  }
+  for (const header of manifest.config?.headers ?? []) {
+    validateRuleSource(header.source, "header");
+  }
+  const previewCredentials = previewCredentialsFor(manifest);
+  const basePath = manifest.config?.basePath ?? "";
+  const i18n = manifest.config?.i18n ?? null;
+  // assetPrefix only re-homes static assets; it never affects page routing.
+  // basePath already prefixes assets, so an explicit assetPrefix stacks on top
+  // of it only when they differ.
+  const assetPrefix =
+    manifest.config?.assetPrefix && manifest.config.assetPrefix !== basePath
+      ? manifest.config.assetPrefix
+      : "";
 
   const handleRequest = async function handleRequest(
     request: Request,
     env: NextaneEnvironment,
+    previewState: PreviewState,
+    hadBasePath: boolean,
   ): Promise<Response> {
     const url = new URL(request.url);
+    // Assets live under the assetPrefix on the wire; map back to the plain
+    // space the ASSETS binding, buildManifest, and vite chunk paths expect.
+    const underAssetPrefix =
+      assetPrefix !== "" && url.pathname.startsWith(`${assetPrefix}/`);
+    const assetPathname = underAssetPrefix
+      ? url.pathname.slice(assetPrefix.length)
+      : url.pathname;
+    const fetchAsset = (): Promise<Response> => {
+      if (!underAssetPrefix) return env.ASSETS.fetch(request);
+      const assetUrl = new URL(request.url);
+      assetUrl.pathname = assetPathname;
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    };
 
     try {
       if (
+        assetPathname ===
+        `/_next/static/${manifest.buildId ?? BUILD_ID}/_buildManifest.js`
+      ) {
+        return buildManifestResponse(manifest);
+      }
+      if (
+        assetPathname.startsWith("/_next/") &&
+        !assetPathname.startsWith("/_next/data/")
+      ) {
+        // Static build assets: never fall through to page routing, and
+        // answer misses with Next's plain-text 404.
+        const asset = await fetchAsset();
+        if (asset.status !== 404) return asset;
+        return new Response("Not Found", {
+          status: 404,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }
+      // Vite emits its hashed chunks under the assetPrefix too; strip it so
+      // the ASSETS binding (served at the site root) resolves them.
+      if (
+        underAssetPrefix &&
+        /\.[a-z0-9]+$/i.test(assetPathname) &&
+        !assetPathname.startsWith("/_next/data/")
+      ) {
+        return fetchAsset();
+      }
+      if (
         url.pathname.startsWith("/@") ||
         url.pathname.startsWith("/src/") ||
-        url.pathname.startsWith("/node_modules/") ||
-        (/\.[a-z0-9]+$/i.test(url.pathname) &&
-          !url.pathname.startsWith("/_next/data/"))
+        url.pathname.startsWith("/node_modules/")
       ) {
         return env.ASSETS.fetch(request);
       }
 
-      if (!url.pathname.startsWith("/_next/data/")) {
+      // i18n: split a leading locale segment off the routing path. `routingUrl`
+      // carries the locale-stripped pathname used for page matching and normal
+      // rules; `localizedPathname` re-adds the resolved locale for `locale:false`
+      // rules whose sources spell out the `:locale` segment.
+      const routingUrl = new URL(url);
+      let locale = i18n?.defaultLocale;
+      if (i18n && !url.pathname.startsWith("/_next/")) {
+        const resolution = resolveLocale(url.pathname, i18n);
+        locale = resolution.locale;
+        routingUrl.pathname = resolution.pathname;
+      }
+      const localizedPathname =
+        i18n && locale
+          ? addLocalePrefix(routingUrl.pathname, locale)
+          : routingUrl.pathname;
+
+      const ruleContext: RuleRequestContext = {
+        url,
+        headers: request.headers,
+        cookies: parseCookies(request.headers.get("cookie")),
+      };
+      // Config redirects run before filesystem/static serving, matching
+      // Next.js: a redirect source wins over a same-path public file.
+      if (!url.pathname.startsWith("/_next/")) {
+        const redirected = matchRedirectRule(
+          rulesForRequest(manifest.config?.redirects, basePath, hadBasePath),
+          routingUrl.pathname,
+          ruleContext,
+          localizedPathname,
+        );
+        if (redirected) {
+          if (redirected.internal) {
+            // Next.js preserves the active locale on internal redirects unless
+            // the rule opts out with `locale: false`; the default locale stays
+            // unprefixed. The locale prefix sits inside the basePath prefix.
+            if (
+              i18n &&
+              locale &&
+              locale !== i18n.defaultLocale &&
+              redirected.rule.locale !== false
+            ) {
+              redirected.location.pathname = addLocalePrefix(
+                redirected.location.pathname,
+                locale,
+              );
+            }
+            if (redirected.rule.basePath !== false) {
+              redirected.location.pathname = addBasePath(
+                redirected.location.pathname,
+                basePath,
+              );
+            }
+          }
+          return new Response(null, {
+            status: redirectStatusFor(redirected.rule),
+            headers: {
+              location: redirected.location.toString(),
+              "cache-control": "private, no-store",
+            },
+          });
+        }
+      }
+
+      if (
+        /\.[a-z0-9]+$/i.test(url.pathname) &&
+        !url.pathname.startsWith("/_next/data/")
+      ) {
+        // Dotted paths are usually static files, but page routes may also
+        // contain dots (e.g. fallback slugs); miss falls through to routing.
+        const asset = await env.ASSETS.fetch(request);
+        if (asset.status !== 404) return asset;
+      }
+
+      if (hadBasePath && !url.pathname.startsWith("/_next/data/")) {
         const canonical = canonicalPathname(
           url.pathname,
           manifest.config?.trailingSlash === true,
         );
         if (canonical !== url.pathname) {
           const location = new URL(request.url);
-          location.pathname = canonical;
+          location.pathname = addBasePath(canonical, basePath);
           return Response.redirect(location, 308);
         }
+      }
+
+      const activeRewrites = rulesForRequest(
+        manifest.config?.rewrites,
+        basePath,
+        hadBasePath,
+      );
+      // Next.js phase order: `beforeFiles` rewrites run before route matching;
+      // `afterFiles` rewrites fire only when no page matched (a real page wins
+      // over an afterFiles rewrite); `fallback` rewrites run last, after the
+      // afterFiles phase also missed.
+      const beforeFilesRewrites = activeRewrites.filter(
+        (rewrite) => rewrite.phase === "beforeFiles",
+      );
+      const afterFilesRewrites = activeRewrites.filter(
+        // Array-form rewrites default to `afterFiles`; an untagged rule (a
+        // hand-built manifest that skipped sanitization) follows that default.
+        (rewrite) => rewrite.phase === "afterFiles" || rewrite.phase === undefined,
+      );
+      const fallbackRewrites = activeRewrites.filter(
+        (rewrite) => rewrite.phase === "fallback",
+      );
+
+      let presetRouting: RewriteResolution | null = null;
+      if (basePath && !hadBasePath) {
+        // Requests outside the basePath are only reachable through
+        // basePath:false rewrites; everything else is not found.
+        const routing = resolveRewrite(
+          rulesForRequest(manifest.config?.rewrites, basePath, false).filter(
+            (rewrite) => rewrite.phase !== "fallback",
+          ),
+          url,
+          ruleContext,
+        );
+        if (routing.external) {
+          return proxyExternalRewrite(request, routing.external);
+        }
+        if (!routing.matched) {
+          return renderNotFound(manifest, request, env);
+        }
+        presetRouting = routing;
       }
 
       const isDataRequest = url.pathname.startsWith("/_next/data/");
@@ -1581,12 +2044,22 @@ export function createNextaneHandler(
         );
       }
       if (dataPath) {
+        // i18n embeds the locale in every data href
+        // (`/_next/data/BUILD/{locale}/about.json`, default locale included),
+        // so resolve it off the data path to get the route and locale context.
+        let dataLocale = locale;
+        let routeDataPath = dataPath;
+        if (i18n) {
+          const resolution = resolveLocale(dataPath, i18n);
+          dataLocale = resolution.locale;
+          routeDataPath = resolution.pathname;
+        }
         const match = matchRoute(
           manifest.routes.filter((route) => route.kind === "page"),
-          dataPath,
+          routeDataPath,
         );
         if (!match) return Response.json({ notFound: true }, { status: 404 });
-        const pageUrl = new URL(dataPath, request.url);
+        const pageUrl = new URL(routeDataPath, request.url);
         pageUrl.search = url.search;
         const { artifact, cacheStatus } = await loadArtifact(
           manifest,
@@ -1596,6 +2069,10 @@ export function createNextaneHandler(
           options,
           pageUrl,
           false,
+          pageUrl,
+          pageUrl,
+          previewState,
+          dataLocale,
         );
         if (artifact.response?.ended) {
           const responseHeaders = new Headers(artifact.response.headers);
@@ -1634,16 +2111,89 @@ export function createNextaneHandler(
         if (artifact.gsp && !artifact.cacheable) {
           headers.set("cache-control", "private, no-store");
         }
-        return Response.json(artifactData(artifact), {
-          status: artifact.notFound ? 404 : 200,
-          headers,
-        });
+        return withPreviewResponseHeaders(
+          Response.json(artifactData(artifact), {
+            status: artifact.notFound ? 404 : 200,
+            headers,
+          }),
+          previewState,
+        );
       }
 
-      const routing = resolveRewrite(manifest, url);
-      const match = matchRoute(manifest.routes, routing.pageUrl.pathname);
+      let routing =
+        presetRouting ??
+        resolveRewrite(
+          beforeFilesRewrites,
+          routingUrl,
+          ruleContext,
+          localizedPathname,
+        );
+      if (routing.external) {
+        return proxyExternalRewrite(request, routing.external);
+      }
+      let match = matchRoute(manifest.routes, routing.pageUrl.pathname);
+      // Next.js phase order is static files > `afterFiles` rewrites > dynamic
+      // routes: an afterFiles rewrite preempts a dynamic-route match or a miss,
+      // but never a static page.
+      const matchedStaticPage = !!match && match.route.params.length === 0;
+      if (!matchedStaticPage && !presetRouting && afterFilesRewrites.length > 0) {
+        const afterFiles = resolveRewrite(
+          afterFilesRewrites,
+          routingUrl,
+          ruleContext,
+          localizedPathname,
+        );
+        if (afterFiles.external) {
+          return proxyExternalRewrite(request, afterFiles.external);
+        }
+        if (afterFiles.matched) {
+          const afterMatch = matchRoute(
+            manifest.routes,
+            afterFiles.pageUrl.pathname,
+          );
+          if (afterMatch) {
+            match = afterMatch;
+            routing = afterFiles;
+          }
+        }
+      }
       if (!match) {
-        return renderNotFound(manifest, request, env);
+        // A `beforeFiles` rewrite may target a static/public file (e.g. a
+        // locale-stripping rewrite to a public asset); serve it if present.
+        if (
+          routing.pageUrl.pathname !== url.pathname &&
+          /\.[a-z0-9]+$/i.test(routing.pageUrl.pathname)
+        ) {
+          const asset = await env.ASSETS.fetch(
+            new Request(routing.pageUrl, request),
+          );
+          if (asset.status !== 404) return asset;
+        }
+        // Still no route matched: try the `fallback` rewrite phase.
+        if (!match && fallbackRewrites.length > 0) {
+          const fallback = resolveRewrite(
+            fallbackRewrites,
+            routingUrl,
+            ruleContext,
+            localizedPathname,
+          );
+          if (fallback.external) {
+            return proxyExternalRewrite(request, fallback.external);
+          }
+          if (fallback.matched) {
+            const fallbackMatch = matchRoute(
+              manifest.routes,
+              fallback.pageUrl.pathname,
+            );
+            if (fallbackMatch) {
+              match = fallbackMatch;
+              routing = fallback;
+            }
+          }
+        }
+        if (!match) {
+          return renderNotFound(manifest, request, env);
+        }
       }
 
       if (match.route.kind === "api") {
@@ -1653,6 +2203,8 @@ export function createNextaneHandler(
           searchQuery(routing.pageUrl, match.params),
           {
             revalidatePath: options.revalidatePath,
+            previewCredentials,
+            previewState,
           },
         );
       }
@@ -1679,11 +2231,16 @@ export function createNextaneHandler(
         true,
         routing.displayUrl,
         routing.resolvedUrl,
+        previewState,
+        locale,
       );
       if (artifact.notFound && match.route.route !== "/404") {
         return renderNotFound(manifest, request, env);
       }
-      return renderArtifactResponse(artifact, request, env, status, cacheStatus);
+      return withPreviewResponseHeaders(
+        await renderArtifactResponse(artifact, request, env, status, cacheStatus),
+        previewState,
+      );
     } catch (error) {
       console.error("[nextane] request failed", error);
       try {
@@ -1711,8 +2268,96 @@ export function createNextaneHandler(
     request: Request,
     env: NextaneEnvironment,
   ): Promise<Response> {
+    let sanitized = stripReservedRequestHeaders(request);
+    // Collapse repeated slashes in the pathname before routing, matching
+    // Next.js: `/base//sv/x` and `/base/sv/x` resolve to the same route.
+    const rawUrl = new URL(sanitized.url);
+    if (/\/{2,}/.test(rawUrl.pathname)) {
+      const normalizedUrl = new URL(rawUrl);
+      normalizedUrl.pathname = rawUrl.pathname.replace(/\/{2,}/g, "/");
+      const normalized = new Request(normalizedUrl, sanitized);
+      if ("cf" in sanitized) {
+        Object.defineProperty(normalized, "cf", {
+          value: (sanitized as Request & { cf?: unknown }).cf,
+          configurable: true,
+        });
+      }
+      sanitized = normalized;
+    }
+    const requestPathname = new URL(sanitized.url).pathname;
+    const hadBasePath =
+      basePath === "" || hasBasePath(requestPathname, basePath);
+    if (basePath && hadBasePath) {
+      const strippedUrl = new URL(sanitized.url);
+      strippedUrl.pathname = stripBasePath(requestPathname, basePath);
+      const stripped = new Request(strippedUrl, sanitized);
+      if ("cf" in sanitized) {
+        Object.defineProperty(stripped, "cf", {
+          value: (sanitized as Request & { cf?: unknown }).cf,
+          configurable: true,
+        });
+      }
+      sanitized = stripped;
+    }
+    const cookies = parseCookies(sanitized.headers.get("cookie"));
+    const previewState = resolvePreviewState(cookies, previewCredentials);
+    let response = await handleRequest(
+      sanitized,
+      env,
+      previewState,
+      hadBasePath,
+    );
+
+    const headerRules = rulesForRequest(
+      manifest.config?.headers,
+      basePath,
+      hadBasePath,
+    );
+    if (headerRules.length > 0 && response.status !== 101) {
+      const url = new URL(sanitized.url);
+      // i18n: match non-`locale:false` header rules against the locale-stripped
+      // path (Next applies them across all locales), and `locale:false` rules
+      // against the locale-included path.
+      let headerPathname = url.pathname;
+      let localizedPathname = url.pathname;
+      if (i18n && !url.pathname.startsWith("/_next/")) {
+        const resolution = resolveLocale(url.pathname, i18n);
+        headerPathname = resolution.pathname;
+        localizedPathname = addLocalePrefix(
+          resolution.pathname,
+          resolution.locale,
+        );
+      }
+      const applied = matchHeaderRules(
+        headerRules,
+        headerPathname,
+        {
+          url,
+          headers: sanitized.headers,
+          cookies,
+        },
+        localizedPathname,
+      );
+      if (applied.length > 0) {
+        const headers = new Headers(response.headers);
+        for (const header of applied) {
+          // A malformed configured header must never take down the worker.
+          try {
+            headers.set(header.key, header.value);
+          } catch {
+            // Skip the invalid header pair.
+          }
+        }
+        response = new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+        });
+      }
+    }
+
     return withDefaultSecurityHeaders(
-      await handleRequest(stripReservedRequestHeaders(request), env),
+      withClearedPreviewCookies(response, previewState),
     );
   };
 }

@@ -5,6 +5,8 @@ import {
 } from "octane";
 import {
   appLoader,
+  basePath,
+  errorLoader,
   pageLoaders,
   routes,
 } from "virtual:nextane-client-manifest";
@@ -13,8 +15,15 @@ import Router, {
   configureClientRouter,
   setRouterState,
 } from "./runtime/router";
-import { isSafeClientNavigationTarget } from "./runtime/navigation";
-import { DefaultNotFound } from "./runtime/default-error";
+import {
+  addBasePath,
+  isSafeClientNavigationTarget,
+  stripBasePath,
+} from "./runtime/navigation";
+import {
+  DefaultNotFound,
+  DefaultServerError,
+} from "./runtime/default-error";
 import type {
   NextaneData,
   ParsedUrlQuery,
@@ -61,7 +70,9 @@ const initialLoader =
   pageLoaders[initialData.page] ??
   (initialData.page === "/404"
     ? async () => ({ default: DefaultNotFound })
-    : undefined);
+    : initialData.page === "/500" || initialData.page === "/_error"
+      ? errorLoader ?? (async () => ({ default: DefaultServerError }))
+      : undefined);
 if (!initialLoader) {
   throw new Error(`[nextane] No client page loader for ${initialData.page}`);
 }
@@ -85,13 +96,24 @@ function queryFromUrl(url: URL, params: ParsedUrlQuery): ParsedUrlQuery {
   return { ...query, ...params };
 }
 
+const localeFields = {
+  ...(initialData.locale !== undefined ? { locale: initialData.locale } : {}),
+  ...(initialData.locales !== undefined
+    ? { locales: initialData.locales }
+    : {}),
+  ...(initialData.defaultLocale !== undefined
+    ? { defaultLocale: initialData.defaultLocale }
+    : {}),
+};
+
 function applyRouterState(url: URL, route: string, params: ParsedUrlQuery) {
   setRouterState({
     route,
     pathname: route,
     query: queryFromUrl(url, params),
-    asPath: `${url.pathname}${url.search}${url.hash}`,
-    basePath: "",
+    asPath: `${stripBasePath(url.pathname, basePath)}${url.search}${url.hash}`,
+    basePath,
+    ...localeFields,
     isReady: true,
     isPreview: false,
     isFallback: false,
@@ -104,8 +126,9 @@ setRouterState({
   route: initialData.page,
   pathname: initialData.page,
   query: initialData.query,
-  asPath: `${initialUrl.pathname}${initialUrl.search}${initialUrl.hash}`,
-  basePath: "",
+  asPath: `${stripBasePath(initialUrl.pathname, basePath)}${initialUrl.search}${initialUrl.hash}`,
+  basePath,
+  ...localeFields,
   isReady: true,
   isPreview: false,
   isFallback: initialData.isFallback,
@@ -123,10 +146,26 @@ const root: Root = App
 
 function dataUrl(url: URL, buildId: string): string {
   const pathname = url.pathname === "/" ? "/index" : url.pathname.replace(/\/$/, "");
-  return `/_next/data/${buildId}${pathname}.json${url.search}`;
+  return `${basePath}/_next/data/${buildId}${pathname}.json${url.search}`;
 }
 
 async function loadNavigation(url: URL) {
+  if ((url.pathname.replace(/\/+$/, "") || "/") === "/_error") {
+    // Next exposes /_error as a pushable route that renders the app's error
+    // page client-side while the browser URL keeps the masked asPath.
+    const loader = errorLoader ?? pageLoaders["/404"];
+    const pageModule = (loader
+      ? await loader()
+      : { default: DefaultNotFound }) as unknown as PageModule;
+    return {
+      match: {
+        route: { route: "/404", regexSource: "^/404/?$", params: [] },
+        params: {},
+      },
+      pageModule,
+      payload: { notFound: true } as PageDataPayload,
+    };
+  }
   const match = matchRoute(routes, url.pathname);
   if (!match) return null;
   const loader = pageLoaders[match.route.route];
@@ -170,10 +209,30 @@ async function loadNavigation(url: URL) {
     loader() as Promise<unknown> as Promise<PageModule>,
   ]);
 
-  if (!data.ok && data.status !== 404) return null;
+  if (!data.ok && data.status !== 404) return { failed: true as const };
   routerDataCache[new URL(dataHref, window.location.href).href] = data.payload;
 
   return { match, pageModule, payload: data.payload };
+}
+
+interface ActiveNavigation {
+  eventUrl: string;
+  shallow: boolean;
+  cancelled: boolean;
+}
+
+let activeNavigation: ActiveNavigation | null = null;
+
+function cancelActiveNavigation() {
+  if (!activeNavigation) return;
+  activeNavigation.cancelled = true;
+  const error = Object.assign(new Error("Route Cancelled"), {
+    cancelled: true,
+  });
+  Router.events.emit("routeChangeError", error, activeNavigation.eventUrl, {
+    shallow: activeNavigation.shallow,
+  });
+  activeNavigation = null;
 }
 
 async function navigate(
@@ -189,51 +248,99 @@ async function navigate(
   ) {
     return false;
   }
-  const url = new URL(href, window.location.href);
-  const sourceUrl = new URL(
-    sourceHref.includes("[") ? href : sourceHref,
+  // Resolve relative and hash-only hrefs against the route-space location so
+  // basePath is never doubled when re-prefixing for the browser URL.
+  const routeSpaceBase = new URL(
+    `${stripBasePath(window.location.pathname, basePath)}${window.location.search}${window.location.hash}`,
     window.location.href,
   );
-  const eventUrl = `${url.pathname}${url.search}${url.hash}`;
+  const url = new URL(href, routeSpaceBase);
+  const sourceUrl = new URL(
+    sourceHref.includes("[") ? href : sourceHref,
+    routeSpaceBase,
+  );
   if (url.origin !== window.location.origin) {
     window.location.assign(url.href);
     return false;
   }
+  const browserHref = `${addBasePath(url.pathname, basePath)}${url.search}${url.hash}`;
+  const browserUrl = new URL(browserHref, window.location.href);
+  const eventUrl = browserHref;
+  const shallow = options.shallow ?? false;
 
-  if (url.pathname === window.location.pathname && url.search === window.location.search) {
+  if (
+    browserUrl.pathname === window.location.pathname &&
+    url.search === window.location.search
+  ) {
     if (url.hash) {
-      Router.events.emit("hashChangeStart", eventUrl, { shallow: options.shallow ?? false });
-      if (mode === "replace") window.history.replaceState({}, "", url);
-      else window.history.pushState({}, "", url);
+      // A hash change supersedes any in-flight route change.
+      cancelActiveNavigation();
+      const state = {
+        url: `${sourceUrl.pathname}${sourceUrl.search}${url.hash}`,
+        as: `${url.pathname}${url.search}${url.hash}`,
+        options: {},
+        __N: true,
+        key: "",
+      };
+      Router.events.emit("hashChangeStart", eventUrl, { shallow });
+      if (mode === "replace") window.history.replaceState(state, "", browserUrl);
+      else window.history.pushState(state, "", browserUrl);
       document.querySelector(url.hash)?.scrollIntoView();
-      Router.events.emit("hashChangeComplete", eventUrl, { shallow: options.shallow ?? false });
+      Router.events.emit("hashChangeComplete", eventUrl, { shallow });
       return true;
     }
+    // Same asPath with a (possibly) different route: replace the current
+    // history entry instead of pushing a duplicate, like Next.js.
+    mode = "replace";
   }
 
-  Router.events.emit("routeChangeStart", eventUrl, {
-    shallow: options.shallow ?? false,
-  });
+  cancelActiveNavigation();
+  const navigation: ActiveNavigation = {
+    eventUrl,
+    shallow,
+    cancelled: false,
+  };
+  activeNavigation = navigation;
+
+  Router.events.emit("routeChangeStart", eventUrl, { shallow });
 
   try {
     const loaded = await loadNavigation(sourceUrl);
+    if (navigation.cancelled) return false;
+    if (loaded && "failed" in loaded) {
+      if (activeNavigation === navigation) activeNavigation = null;
+      const error = new Error("Failed to load static props");
+      Router.events.emit("routeChangeError", error, eventUrl, { shallow });
+      if (hardReloadOnFailure) window.location.assign(browserUrl.href);
+      return false;
+    }
     if (!loaded) {
-      if (hardReloadOnFailure) window.location.assign(url.href);
+      if (activeNavigation === navigation) activeNavigation = null;
+      if (hardReloadOnFailure) window.location.assign(browserUrl.href);
       return false;
     }
 
     if (loaded.payload.__N_REDIRECT) {
+      if (activeNavigation === navigation) activeNavigation = null;
       if (isSafeClientNavigationTarget(loaded.payload.__N_REDIRECT)) {
         window.location.assign(loaded.payload.__N_REDIRECT);
       }
       return false;
     }
 
-    Router.events.emit("beforeHistoryChange", eventUrl, {
-      shallow: options.shallow ?? false,
-    });
-    if (mode === "replace") window.history.replaceState({}, "", url);
-    else window.history.pushState({}, "", url);
+    Router.events.emit("beforeHistoryChange", eventUrl, { shallow });
+    const historyState = {
+      url: `${sourceUrl.pathname}${sourceUrl.search}`,
+      as: `${url.pathname}${url.search}${url.hash}`,
+      options: {},
+      __N: true,
+      key: "",
+    };
+    if (mode === "replace") {
+      window.history.replaceState(historyState, "", browserUrl);
+    } else {
+      window.history.pushState(historyState, "", browserUrl);
+    }
 
     const notFound = loaded.payload.notFound === true;
     const notFoundLoader = pageLoaders["/404"];
@@ -271,14 +378,17 @@ async function navigate(
     };
 
     if (options.scroll !== false) window.scrollTo({ top: 0, left: 0 });
-    Router.events.emit("routeChangeComplete", eventUrl, {
-      shallow: options.shallow ?? false,
-    });
+    if (activeNavigation === navigation) activeNavigation = null;
+    Router.events.emit("routeChangeComplete", eventUrl, { shallow });
     return true;
   } catch (error) {
-    Router.events.emit("routeChangeError", error, eventUrl, {
-      shallow: options.shallow ?? false,
-    });
+    if (navigation.cancelled) return false;
+    if (activeNavigation === navigation) activeNavigation = null;
+    Router.events.emit("routeChangeError", error, eventUrl, { shallow });
+    if (hardReloadOnFailure) {
+      window.location.assign(browserUrl.href);
+      return false;
+    }
     throw error;
   }
 }
@@ -287,7 +397,13 @@ configureClientRouter({
   navigate,
   async prefetch(href) {
     if (!isSafeClientNavigationTarget(href)) return;
-    const url = new URL(href, window.location.href);
+    const url = new URL(
+      href,
+      new URL(
+        stripBasePath(window.location.pathname, basePath),
+        window.location.href,
+      ),
+    );
     await loadNavigation(url);
   },
 });
@@ -302,18 +418,19 @@ queueMicrotask(() => {
 });
 
 setTimeout(() => {
+  const currentPath = `${stripBasePath(window.location.pathname, basePath)}${window.location.search}${window.location.hash}`;
   if (initialData.isFallback) {
     void navigate(
-      window.location.href,
+      currentPath,
       "replace",
       { scroll: false },
-      initialData.resolvedPath ?? window.location.href,
+      initialData.resolvedPath ?? currentPath,
       false,
     );
     return;
   }
   if (initialData.gsp) {
-    const match = matchRoute(routes, initialUrl.pathname);
+    const match = matchRoute(routes, stripBasePath(initialUrl.pathname, basePath));
     if (match) {
       applyRouterState(initialUrl, match.route.route, match.params);
       if (App) {
@@ -330,8 +447,16 @@ setTimeout(() => {
   }
 }, 0);
 
-window.addEventListener("popstate", () => {
-  void navigate(window.location.href, "replace", { scroll: false });
+window.addEventListener("popstate", (event) => {
+  const state = event.state as
+    | { url?: string; as?: string; __N?: boolean }
+    | null;
+  const currentPath = `${stripBasePath(window.location.pathname, basePath)}${window.location.search}${window.location.hash}`;
+  if (state?.__N && typeof state.url === "string") {
+    void navigate(state.as ?? currentPath, "replace", { scroll: false }, state.url);
+    return;
+  }
+  void navigate(currentPath, "replace", { scroll: false });
 });
 
 document.documentElement.dataset.nextaneHydrated = "true";

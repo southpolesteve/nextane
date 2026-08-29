@@ -5,6 +5,7 @@ import {
   loadApp,
   loadDocument,
   loadError,
+  preview,
   routes,
 } from "virtual:nextane-server-manifest";
 import {
@@ -25,6 +26,7 @@ const manifest = {
   loadDocument,
   loadError,
   config,
+  preview,
 };
 const handleIsrArtifact = createIsrArtifactHandler(manifest);
 const runtimeCaches = caches as CacheStorage & { default: Cache };

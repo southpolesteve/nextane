@@ -1,0 +1,16 @@
+import { chromium } from "/home/user/nextane/node_modules/playwright-core/index.mjs";
+const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium/../chromium-1194/chrome-linux/chrome", args: ["--no-sandbox"] });
+const page = await browser.newPage();
+page.on("console", m => console.log("CONSOLE", m.type(), m.text().slice(0,200)));
+page.on("pageerror", e => console.log("PAGEERROR", String(e).slice(0,300)));
+await page.goto("http://127.0.0.1:8801/docs/");
+await page.waitForSelector("#index-page", { timeout: 8000 }).catch(() => console.log("NO #index-page"));
+await page.waitForTimeout(300);
+await page.click("#hello-link").catch(e => console.log("CLICK FAIL", String(e).slice(0,200)));
+await page.waitForTimeout(1500);
+console.log("URL after click:", page.url());
+const hasSel = await page.$("#something-else-link");
+console.log("something-else-link present:", !!hasSel);
+const html = (await page.content()).match(/<div id="__next">[\s\S]{0,300}/)?.[0];
+console.log("BODY:", html?.slice(0, 400));
+await browser.close();

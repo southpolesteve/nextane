@@ -10,6 +10,7 @@ import {
   javascriptStringLiteral,
   loadRoutingConfig,
   nextane,
+  validatedAssetPrefix,
 } from "../../src/plugin";
 
 async function filesBelow(directory: string): Promise<string[]> {
@@ -124,21 +125,93 @@ describe("client build security", () => {
       );
     }
 
-    for (const configName of ["headers", "redirects", "i18n"]) {
-      const configRoot = await mkdtemp(
-        path.join(os.tmpdir(), "nextane-config-"),
-      );
-      const value =
-        configName === "i18n"
-          ? `{ locales: ["en"], defaultLocale: "en" }`
-          : "async () => []";
-      await writeFile(
-        path.join(configRoot, "next.config.ts"),
-        `export default { ${configName}: ${value} };`,
-      );
-      await expect(loadRoutingConfig(configRoot)).rejects.toThrow(
-        new RegExp(`security policy: ${configName}`),
-      );
-    }
+    const domainsRoot = await mkdtemp(path.join(os.tmpdir(), "nextane-config-"));
+    await writeFile(
+      path.join(domainsRoot, "next.config.js"),
+      `module.exports = { i18n: { locales: ["en"], defaultLocale: "en", domains: [{ domain: "example.com", defaultLocale: "en" }] } };`,
+    );
+    await expect(loadRoutingConfig(domainsRoot)).rejects.toThrow(
+      /i18n\.domains routing is not supported/,
+    );
+  });
+
+  it("parses supported i18n config", async () => {
+    const configRoot = await mkdtemp(path.join(os.tmpdir(), "nextane-config-"));
+    await writeFile(
+      path.join(configRoot, "next.config.js"),
+      `module.exports = { i18n: { locales: ["en", "fr"], defaultLocale: "en" } };`,
+    );
+    const config = await loadRoutingConfig(configRoot);
+    expect(config.i18n).toEqual({ locales: ["en", "fr"], defaultLocale: "en" });
+  });
+
+  it("parses redirects, headers, and conditional rewrites from next.config", async () => {
+    const configRoot = await mkdtemp(path.join(os.tmpdir(), "nextane-config-"));
+    await writeFile(
+      path.join(configRoot, "next.config.js"),
+      `module.exports = {
+        async rewrites() {
+          return {
+            beforeFiles: [
+              {
+                source: "/:path(.*)",
+                has: [{ type: "query", key: "json", value: "true" }],
+                destination: "/api/json?from=/:path",
+              },
+            ],
+          };
+        },
+        async redirects() {
+          return [
+            { source: "/redirect-1", destination: "/somewhere-else", permanent: false },
+            { source: "/redirect-no-basepath", destination: "/another", permanent: false, basePath: false },
+          ];
+        },
+        async headers() {
+          return [
+            { source: "/add-header", headers: [{ key: "x-hello", value: "world" }] },
+          ];
+        },
+      };`,
+    );
+    const config = await loadRoutingConfig(configRoot);
+    expect(config.rewrites).toEqual([
+      {
+        source: "/:path(.*)",
+        destination: "/api/json?from=/:path",
+        phase: "beforeFiles",
+        has: [{ type: "query", key: "json", value: "true" }],
+      },
+    ]);
+    expect(config.redirects).toEqual([
+      { source: "/redirect-1", destination: "/somewhere-else", phase: "afterFiles" },
+      {
+        source: "/redirect-no-basepath",
+        destination: "/another",
+        phase: "afterFiles",
+        basePath: false,
+      },
+    ]);
+    expect(config.headers).toEqual([
+      { source: "/add-header", headers: [{ key: "x-hello", value: "world" }] },
+    ]);
+  });
+});
+
+describe("assetPrefix validation", () => {
+  it("normalizes path prefixes and treats empty/'/' as no prefix", () => {
+    expect(validatedAssetPrefix(undefined)).toBe("");
+    expect(validatedAssetPrefix("")).toBe("");
+    // Next.js accepts "/" as an effectively empty prefix rather than erroring.
+    expect(validatedAssetPrefix("/")).toBe("");
+    expect(validatedAssetPrefix("/assets")).toBe("/assets");
+    expect(validatedAssetPrefix("/assets/")).toBe("/assets");
+  });
+
+  it("rejects full-URL prefixes and non-slash paths", () => {
+    expect(() => validatedAssetPrefix("https://cdn.example.com")).toThrow(
+      /full-URL assetPrefix/,
+    );
+    expect(() => validatedAssetPrefix("assets")).toThrow(/must start with a slash/);
   });
 });

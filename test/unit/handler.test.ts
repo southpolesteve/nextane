@@ -11,6 +11,8 @@ import {
   createNextaneHandler,
   type NextaneManifest,
 } from "../../src/server/handler";
+import { runApiRoute } from "../../src/server/api";
+import { generatePreviewCredentials } from "../../src/server/preview";
 
 const route = {
   route: "/items/[slug]",
@@ -1457,5 +1459,773 @@ describe("Pages Router server compatibility", () => {
     expect(html).not.toContain(malicious);
     expect(html).not.toContain("<script>globalThis.pwned");
     expect(html).toContain("&lt;/pre&gt;&lt;script&gt;");
+  });
+});
+
+describe("Preview Mode", () => {
+  const previewRoute = (log: string[]) => ({
+    route: "/preview",
+    regexSource: "^/preview/?$",
+    params: [],
+    id: 0,
+    kind: "page" as const,
+    async load() {
+      return {
+        default: Page,
+        async getStaticProps(context: {
+          preview?: boolean;
+          previewData?: unknown;
+        }) {
+          log.push(JSON.stringify(context.previewData ?? null));
+          return {
+            props: {
+              requestUrl: context.preview
+                ? `preview:${JSON.stringify(context.previewData)}`
+                : "static",
+            },
+          };
+        },
+      };
+    },
+  });
+
+  async function enablePreviewCookies(
+    credentials: ReturnType<typeof generatePreviewCredentials>,
+  ): Promise<string> {
+    const enable = await runApiRoute(
+      {
+        default(
+          _request: unknown,
+          reply: {
+            setPreviewData(data: unknown): void;
+            json(value: unknown): void;
+          },
+        ) {
+          reply.setPreviewData({ hello: "world" });
+          reply.json({ enabled: true });
+        },
+      },
+      new Request("https://nextane.test/api/enable"),
+      {},
+      { previewCredentials: credentials },
+    );
+    return enable.headers
+      .getSetCookie()
+      .map((cookie) => cookie.split(";", 1)[0])
+      .join("; ");
+  }
+
+  it("renders per-request preview props without touching the shared artifact path", async () => {
+    const credentials = generatePreviewCredentials();
+    const log: string[] = [];
+    const loadCachedArtifact = vi.fn();
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [previewRoute(log)],
+        loadApp: null,
+        loadDocument: null,
+        preview: credentials,
+      }),
+      { loadCachedArtifact },
+    );
+    const cookieHeader = await enablePreviewCookies(credentials);
+
+    const response = await handler(
+      new Request("https://nextane.test/preview", {
+        headers: { cookie: cookieHeader },
+      }),
+      { ASSETS: assets },
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('preview:{"hello":"world"}');
+    expect(html).toContain("__N_PREVIEW");
+    expect(response.headers.get("cache-control")).toBe(
+      "private, no-cache, no-store, max-age=0, must-revalidate",
+    );
+    expect(loadCachedArtifact).not.toHaveBeenCalled();
+    expect(log).toEqual(['{"hello":"world"}']);
+  });
+
+  it("serves non-preview requests from the shared path and clears stale cookies", async () => {
+    const credentials = generatePreviewCredentials();
+    const log: string[] = [];
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [previewRoute(log)],
+        loadApp: null,
+        loadDocument: null,
+        preview: credentials,
+      }),
+    );
+
+    const plain = await handler(new Request("https://nextane.test/preview"), {
+      ASSETS: assets,
+    });
+    expect(await plain.text()).toContain("static");
+    expect(plain.headers.getSetCookie()).toEqual([]);
+
+    const stale = await handler(
+      new Request("https://nextane.test/preview", {
+        headers: {
+          cookie: `__prerender_bypass=${generatePreviewCredentials().previewModeId}`,
+        },
+      }),
+      { ASSETS: assets },
+    );
+    expect(await stale.text()).toContain("static");
+    const cleared = stale.headers.getSetCookie();
+    expect(cleared).toHaveLength(2);
+    for (const cookie of cleared) {
+      expect(cookie).toContain("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+    }
+    expect(log).toEqual(["null", "null"]);
+  });
+
+  it("provides preview context to getServerSideProps", async () => {
+    const credentials = generatePreviewCredentials();
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [
+          {
+            route: "/gssp",
+            regexSource: "^/gssp/?$",
+            params: [],
+            id: 0,
+            kind: "page" as const,
+            async load() {
+              return {
+                default: Page,
+                async getServerSideProps(context: {
+                  preview?: boolean;
+                  previewData?: unknown;
+                  draftMode?: boolean;
+                }) {
+                  return {
+                    props: {
+                      requestUrl: JSON.stringify({
+                        preview: context.preview,
+                        previewData: context.previewData,
+                        draftMode: context.draftMode,
+                      }),
+                    },
+                  };
+                },
+              };
+            },
+          },
+        ],
+        loadApp: null,
+        loadDocument: null,
+        preview: credentials,
+      }),
+    );
+    const cookieHeader = await enablePreviewCookies(credentials);
+    const response = await handler(
+      new Request("https://nextane.test/gssp", {
+        headers: { cookie: cookieHeader },
+      }),
+      { ASSETS: assets },
+    );
+    const html = await response.text();
+    expect(html).toContain('"preview":true');
+    expect(html).toContain('"draftMode":true');
+    expect(html).toContain('"hello":"world"');
+  });
+
+  it("bypasses fallback:false 404s while previewing", async () => {
+    const credentials = generatePreviewCredentials();
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [
+          {
+            route: "/posts/[slug]",
+            regexSource: "^/posts/([^/]+)/?$",
+            params: [{ name: "slug", kind: "single" as const }],
+            id: 0,
+            kind: "page" as const,
+            async load() {
+              return {
+                default: Page,
+                async getStaticPaths() {
+                  return { paths: [], fallback: false };
+                },
+                async getStaticProps({ params }: { params: { slug: string } }) {
+                  return { props: { requestUrl: `post:${params.slug}` } };
+                },
+              };
+            },
+          },
+        ],
+        loadApp: null,
+        loadDocument: null,
+        preview: credentials,
+      }),
+    );
+
+    const blocked = await handler(
+      new Request("https://nextane.test/posts/draft-post"),
+      { ASSETS: assets },
+    );
+    expect(blocked.status).toBe(404);
+
+    const cookieHeader = await enablePreviewCookies(credentials);
+    const previewed = await handler(
+      new Request("https://nextane.test/posts/draft-post", {
+        headers: { cookie: cookieHeader },
+      }),
+      { ASSETS: assets },
+    );
+    expect(previewed.status).toBe(200);
+    expect(await previewed.text()).toContain("post:draft-post");
+  });
+});
+
+describe("next.config route rules", () => {
+  const jsonApiRoute = {
+    route: "/api/json",
+    regexSource: "^/api/json/?$",
+    params: [],
+    id: 7,
+    kind: "api" as const,
+    async load() {
+      return {
+        default(
+          request: { query: Record<string, unknown> },
+          reply: { json(value: unknown): void },
+        ) {
+          reply.json({ from: request.query.from ?? "" });
+        },
+      };
+    },
+  };
+
+  it("applies has-condition rewrites with custom parameter patterns", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [route, jsonApiRoute],
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          rewrites: [
+            {
+              source: "/:path(.*)",
+              has: [{ type: "query" as const, key: "json", value: "true" }],
+              destination: "/api/json?from=/:path",
+            },
+          ],
+        },
+      }),
+    );
+
+    const rewritten = await handler(
+      new Request("https://nextane.test/some/route/for?json=true"),
+      { ASSETS: assets },
+    );
+    expect(await rewritten.json()).toEqual({ from: "/some/route/for" });
+
+    const unmatched = await handler(
+      new Request("https://nextane.test/some/route/for"),
+      { ASSETS: assets },
+    );
+    expect(unmatched.status).toBe(404);
+
+    const direct = await handler(
+      new Request("https://nextane.test/api/json"),
+      { ASSETS: assets },
+    );
+    expect(await direct.json()).toEqual({ from: "" });
+  });
+
+  it("issues configured redirects with Next status codes", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          redirects: [
+            {
+              source: "/redirect-1",
+              destination: "/somewhere-else",
+              permanent: false,
+            },
+            {
+              source: "/old/:slug",
+              destination: "/items/:slug",
+              permanent: true,
+            },
+          ],
+        },
+      }),
+    );
+
+    const temporary = await handler(
+      new Request("https://nextane.test/redirect-1?keep=1"),
+      { ASSETS: assets },
+    );
+    expect(temporary.status).toBe(307);
+    const location = new URL(temporary.headers.get("location") ?? "");
+    expect(location.pathname).toBe("/somewhere-else");
+    expect(location.searchParams.get("keep")).toBe("1");
+
+    const permanent = await handler(
+      new Request("https://nextane.test/old/widget"),
+      { ASSETS: assets },
+    );
+    expect(permanent.status).toBe(308);
+    expect(new URL(permanent.headers.get("location") ?? "").pathname).toBe(
+      "/items/widget",
+    );
+  });
+
+  it("applies configured headers to matching responses", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          headers: [
+            {
+              source: "/items/:slug",
+              headers: [{ key: "x-hello", value: "world" }],
+            },
+            {
+              source: "/items/:slug",
+              has: [{ type: "header" as const, key: "x-flag" }],
+              headers: [{ key: "x-conditional", value: "yes" }],
+            },
+          ],
+        },
+      }),
+    );
+
+    const plain = await handler(
+      new Request("https://nextane.test/items/widget"),
+      { ASSETS: assets },
+    );
+    expect(plain.headers.get("x-hello")).toBe("world");
+    expect(plain.headers.get("x-conditional")).toBeNull();
+
+    const flagged = await handler(
+      new Request("https://nextane.test/items/widget", {
+        headers: { "x-flag": "1" },
+      }),
+      { ASSETS: assets },
+    );
+    expect(flagged.headers.get("x-hello")).toBe("world");
+    expect(flagged.headers.get("x-conditional")).toBe("yes");
+  });
+});
+
+describe("basePath", () => {
+  const helloRoute = {
+    route: "/hello",
+    regexSource: "^/hello/?$",
+    params: [],
+    id: 0,
+    kind: "page" as const,
+    async load() {
+      return {
+        default: () => createElement("h1", null, "Hello World"),
+      };
+    },
+  };
+
+  function basePathManifest(extra: Record<string, unknown> = {}) {
+    return manifest({
+      routes: [helloRoute],
+      loadApp: null,
+      loadDocument: null,
+      config: { basePath: "/docs", ...extra },
+    });
+  }
+
+  it("serves pages under the basePath and 404s outside it", async () => {
+    const handler = createNextaneHandler(basePathManifest());
+    const inside = await handler(
+      new Request("https://nextane.test/docs/hello"),
+      { ASSETS: assets },
+    );
+    expect(inside.status).toBe(200);
+    expect(await inside.text()).toContain("Hello World");
+
+    const outside = await handler(new Request("https://nextane.test/hello"), {
+      ASSETS: assets,
+    });
+    expect(outside.status).toBe(404);
+    expect(await outside.text()).not.toContain("Hello World");
+
+    const bare = await handler(new Request("https://nextane.test/docs"), {
+      ASSETS: assets,
+    });
+    expect(bare.status).toBe(404);
+  });
+
+  it("prefixes trailing-slash canonicalization and redirect rules", async () => {
+    const handler = createNextaneHandler(
+      basePathManifest({
+        trailingSlash: true,
+        redirects: [
+          {
+            source: "/redirect-1",
+            destination: "/somewhere-else",
+            permanent: false,
+          },
+          {
+            source: "/redirect-no-basepath",
+            destination: "/another-destination",
+            permanent: false,
+            basePath: false,
+          },
+        ],
+      }),
+    );
+
+    const canonical = await handler(
+      new Request("https://nextane.test/docs/hello"),
+      { ASSETS: assets },
+    );
+    expect(canonical.status).toBe(308);
+    expect(new URL(canonical.headers.get("location") ?? "").pathname).toBe(
+      "/docs/hello/",
+    );
+
+    const redirected = await handler(
+      new Request("https://nextane.test/docs/redirect-1"),
+      { ASSETS: assets },
+    );
+    expect(redirected.status).toBe(307);
+    expect(new URL(redirected.headers.get("location") ?? "").pathname).toBe(
+      "/docs/somewhere-else",
+    );
+
+    const insideOnly = await handler(
+      new Request("https://nextane.test/redirect-1"),
+      { ASSETS: assets },
+    );
+    expect(insideOnly.status).toBe(404);
+
+    const outsideRule = await handler(
+      new Request("https://nextane.test/redirect-no-basepath"),
+      { ASSETS: assets },
+    );
+    expect(outsideRule.status).toBe(307);
+    expect(new URL(outsideRule.headers.get("location") ?? "").pathname).toBe(
+      "/another-destination",
+    );
+  });
+
+  it("serves basePath-prefixed data routes and reports router.basePath", async () => {
+    const handler = createNextaneHandler(basePathManifest());
+    const data = await handler(
+      new Request(
+        "https://nextane.test/docs/_next/data/development/hello.json",
+      ),
+      { ASSETS: assets },
+    );
+    expect(data.status).toBe(200);
+
+    const page = await handler(
+      new Request("https://nextane.test/docs/hello"),
+      { ASSETS: assets },
+    );
+    const html = await page.text();
+    expect(html).toContain('"page":"/hello"');
+  });
+});
+
+describe("route rule hardening", () => {
+  it("substitutes wildcard destination params across path segments", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          redirects: [
+            { source: "/old/:path*", destination: "/new/:path*", permanent: true },
+          ],
+        },
+      }),
+    );
+    const response = await handler(
+      new Request("https://nextane.test/old/a/b/c"),
+      { ASSETS: assets },
+    );
+    expect(response.status).toBe(308);
+    expect(new URL(response.headers.get("location") ?? "").pathname).toBe(
+      "/new/a/b/c",
+    );
+  });
+
+  it("does not prepend basePath to absolute redirect destinations", async () => {
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          basePath: "/docs",
+          redirects: [
+            {
+              source: "/go",
+              destination: "https://nextane.test/landing",
+              permanent: false,
+            },
+          ],
+        },
+      }),
+    );
+    const response = await handler(
+      new Request("https://nextane.test/docs/go"),
+      { ASSETS: assets },
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://nextane.test/landing",
+    );
+  });
+
+  it("strips control characters from configured header values", async () => {
+    const injectionRoute = {
+      route: "/blog/[slug]",
+      regexSource: "^/blog/([^/]+)/?$",
+      params: [{ name: "slug", kind: "single" as const }],
+      id: 3,
+      kind: "page" as const,
+      async load() {
+        return { default: () => createElement("p", null, "post") };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [injectionRoute],
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          headers: [
+            {
+              source: "/blog/:slug",
+              headers: [{ key: "x-slug", value: ":slug" }],
+            },
+          ],
+        },
+      }),
+    );
+    const response = await handler(
+      new Request(
+        "https://nextane.test/blog/foo%0d%0aset-cookie:%20evil%3D1",
+      ),
+      { ASSETS: assets },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("x-slug")).not.toMatch(/[\r\n]/);
+  });
+
+  it("prefers a configured redirect over an existing static asset", async () => {
+    const staticAssets = {
+      ASSETS: {
+        async fetch(request: Request) {
+          if (new URL(request.url).pathname === "/legacy.html") {
+            return new Response("<p>old file</p>", {
+              status: 200,
+              headers: { "content-type": "text/html" },
+            });
+          }
+          return assets.fetch();
+        },
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          redirects: [
+            { source: "/legacy.html", destination: "/modern", permanent: true },
+          ],
+        },
+      }),
+    );
+    const response = await handler(
+      new Request("https://nextane.test/legacy.html"),
+      staticAssets,
+    );
+    expect(response.status).toBe(308);
+    expect(new URL(response.headers.get("location") ?? "").pathname).toBe(
+      "/modern",
+    );
+  });
+});
+
+describe("i18n", () => {
+  const localePage = (log: string[]) => ({
+    route: "/blog/[slug]",
+    regexSource: "^/blog/([^/]+)/?$",
+    params: [{ name: "slug", kind: "single" as const }],
+    id: 0,
+    kind: "page" as const,
+    async load() {
+      return {
+        default: (props: { slug?: string }) =>
+          createElement("p", { id: "slug" }, props.slug),
+        async getStaticProps({ params }: { params: { slug: string } }) {
+          log.push(params.slug);
+          return { props: { slug: params.slug } };
+        },
+        async getStaticPaths() {
+          return { paths: [], fallback: "blocking" as const };
+        },
+      };
+    },
+  });
+
+  function i18nManifest(config: Record<string, unknown> = {}) {
+    return manifest({
+      routes: [localePage([])],
+      loadApp: null,
+      loadDocument: null,
+      config: {
+        i18n: { locales: ["en", "es"], defaultLocale: "en" },
+        ...config,
+      },
+    });
+  }
+
+  it("strips a leading locale before matching pages", async () => {
+    const handler = createNextaneHandler(i18nManifest());
+    const def = await handler(new Request("https://nextane.test/blog/first"), {
+      ASSETS: assets,
+    });
+    expect(def.status).toBe(200);
+    expect(await def.text()).toContain("first");
+
+    const localed = await handler(
+      new Request("https://nextane.test/es/blog/second"),
+      { ASSETS: assets },
+    );
+    expect(localed.status).toBe(200);
+    expect(await localed.text()).toContain("second");
+
+    // A non-locale first segment is not stripped.
+    const notLocale = await handler(
+      new Request("https://nextane.test/de/blog/x"),
+      { ASSETS: assets },
+    );
+    expect(notLocale.status).toBe(404);
+  });
+
+  it("matches locale:false rewrites against the locale-included path with default insertion", async () => {
+    const apiRoute = {
+      route: "/api/echo",
+      regexSource: "^/api/echo/?$",
+      params: [],
+      id: 5,
+      kind: "api" as const,
+      async load() {
+        return {
+          default(_request: unknown, reply: { send(v: string): void }) {
+            reply.send("api ok");
+          },
+        };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [apiRoute],
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          i18n: { locales: ["en", "sv"], defaultLocale: "en" },
+          rewrites: [
+            {
+              source: "/:locale/rewrite-api/:path*",
+              destination: "/api/:path*",
+              locale: false,
+              phase: "beforeFiles" as const,
+            },
+          ],
+        },
+      }),
+    );
+
+    const unprefixed = await handler(
+      new Request("https://nextane.test/rewrite-api/echo"),
+      { ASSETS: assets },
+    );
+    expect(await unprefixed.text()).toBe("api ok");
+
+    const prefixed = await handler(
+      new Request("https://nextane.test/sv/rewrite-api/echo"),
+      { ASSETS: assets },
+    );
+    expect(await prefixed.text()).toBe("api ok");
+  });
+
+  it("only applies fallback-phase rewrites when no route matched", async () => {
+    const log: string[] = [];
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [localePage(log)],
+        loadApp: null,
+        loadDocument: null,
+        config: {
+          i18n: { locales: ["en", "fr"], defaultLocale: "en" },
+          rewrites: [
+            {
+              source: "/blog/:path*",
+              destination: "https://example.invalid/",
+              phase: "fallback" as const,
+            },
+          ],
+        },
+      }),
+    );
+    // /blog/first matches a real route, so the fallback rewrite must not fire.
+    const response = await handler(
+      new Request("https://nextane.test/blog/first"),
+      { ASSETS: assets },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("first");
+  });
+});
+
+describe("i18n render context", () => {
+  it("exposes locale/locales/defaultLocale to the router and page data", async () => {
+    const localeReporter = {
+      route: "/newpage",
+      regexSource: "^/newpage/?$",
+      params: [],
+      id: 0,
+      kind: "page" as const,
+      async load() {
+        return {
+          default: () =>
+            createElement("p", { id: "current-locale" }, Router.locale),
+        };
+      },
+    };
+    const handler = createNextaneHandler(
+      manifest({
+        routes: [localeReporter],
+        loadApp: null,
+        loadDocument: null,
+        config: { i18n: { locales: ["en", "sv", "nl"], defaultLocale: "en" } },
+      }),
+    );
+
+    const sv = await handler(new Request("https://nextane.test/sv/newpage"), {
+      ASSETS: assets,
+    });
+    const svHtml = await sv.text();
+    expect(svHtml).toContain('id="current-locale">sv');
+    expect(svHtml).toContain('"locale":"sv"');
+    expect(svHtml).toContain('"defaultLocale":"en"');
+
+    const def = await handler(new Request("https://nextane.test/newpage"), {
+      ASSETS: assets,
+    });
+    expect(await def.text()).toContain('id="current-locale">en');
   });
 });
