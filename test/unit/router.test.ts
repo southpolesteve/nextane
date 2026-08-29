@@ -246,6 +246,11 @@ describe("withLocalePrefix", () => {
     expect(withLocalePrefix("https://x/y", "de", "en", "en")).toBe(
       "https://x/y",
     );
+    // Protocol-relative external hrefs are left alone (not turned into
+    // `/de//cdn.example.com/x`).
+    expect(withLocalePrefix("//cdn.example.com/x", "de", "en", "en")).toBe(
+      "//cdn.example.com/x",
+    );
   });
 });
 

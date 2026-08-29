@@ -44,7 +44,7 @@ larger Next.js Pages Router compatibility claim.
 
 The prototype-owned suite currently has:
 
-- **93/93 unit and security tests** covering route discovery/matching, classic
+- **96/96 unit and security tests** covering route discovery/matching, classic
   and Edge API request/response adaptation, URL normalization, cache isolation,
   Preview Mode signing and bypass semantics, redirects/headers/conditional
   rewrites and their phase order (a real page beats an `afterFiles` rewrite),

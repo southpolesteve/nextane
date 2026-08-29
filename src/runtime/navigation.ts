@@ -60,7 +60,9 @@ export function withLocalePrefix(
 ): string {
   if (defaultLocale === undefined) return target;
   if (locale === false) return target;
-  if (!target.startsWith("/")) return target;
+  // Only route-space paths are localized; leave external, protocol-relative
+  // (`//host`), and relative targets untouched.
+  if (!target.startsWith("/") || target.startsWith("//")) return target;
   const resolved = typeof locale === "string" ? locale : currentLocale;
   if (!resolved || resolved === defaultLocale) return target;
   const boundary = target.search(/[?#]/);

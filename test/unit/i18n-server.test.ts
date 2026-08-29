@@ -179,6 +179,30 @@ describe("i18n header rules", () => {
     );
     expect(prefixed.headers.get("x-custom")).toBe("1");
   });
+
+  it("applies locale:false header rules to default-locale (unprefixed) requests", async () => {
+    const handler = createNextaneHandler(
+      i18nManifest({
+        config: {
+          i18n: { ...I18N },
+          headers: [
+            {
+              source: "/about",
+              locale: false,
+              headers: [{ key: "x-ignore-locale", value: "1" }],
+            },
+          ],
+        },
+      }),
+    );
+
+    // The default locale is served unprefixed, so a `locale: false` source must
+    // match the raw `/about` path — not a phantom `/en/about`.
+    const dflt = await handler(new Request("https://nextane.test/about"), {
+      ASSETS: assets,
+    });
+    expect(dflt.headers.get("x-ignore-locale")).toBe("1");
+  });
 });
 
 describe("i18n data requests", () => {
@@ -262,5 +286,70 @@ describe("afterFiles rewrite phase order", () => {
       { ASSETS: assets },
     );
     expect(await rewritten.text()).toContain("TEAM");
+  });
+
+  it("resolves afterFiles against the beforeFiles-rewritten path, not the original", async () => {
+    const articles = {
+      route: "/articles/[slug]",
+      regexSource: "^/articles/([^/]+)/?$",
+      params: [{ name: "slug", kind: "single" as const }],
+      id: 3,
+      kind: "page" as const,
+      async load() {
+        return { default: () => createElement("p", { id: "page" }, "ARTICLE") };
+      },
+    };
+    const handler = createNextaneHandler({
+      routes: [articles, labeledPage("/other-internal", "OTHER")],
+      loadApp: null,
+      loadDocument: null,
+      loadError: null,
+      buildId: "test-build",
+      config: {
+        rewrites: [
+          {
+            source: "/legacy/:slug",
+            destination: "/articles/:slug",
+            phase: "beforeFiles",
+          },
+          {
+            source: "/legacy/:path*",
+            destination: "/other-internal",
+            phase: "afterFiles",
+          },
+        ],
+      },
+    });
+
+    // beforeFiles rewrites /legacy/hello -> /articles/hello (a dynamic route);
+    // the afterFiles source no longer matches the rewritten path, so the
+    // article renders instead of the afterFiles destination.
+    const res = await handler(
+      new Request("https://nextane.test/legacy/hello"),
+      { ASSETS: assets },
+    );
+    const html = await res.text();
+    expect(html).toContain("ARTICLE");
+    expect(html).not.toContain("OTHER");
+  });
+
+  it("404s when a fired afterFiles rewrite resolves to no route", async () => {
+    const handler = createNextaneHandler({
+      routes: [dynamicSlugPage("SLUG")],
+      loadApp: null,
+      loadDocument: null,
+      loadError: null,
+      buildId: "test-build",
+      config: {
+        rewrites: [{ source: "/promo", destination: "/campaigns/summer" }],
+      },
+    });
+
+    // /promo matches [slug], but the afterFiles rewrite fires to
+    // /campaigns/summer, which has no route -> 404 (not a stale [slug] render).
+    const res = await handler(new Request("https://nextane.test/promo"), {
+      ASSETS: assets,
+    });
+    expect(res.status).toBe(404);
   });
 });
