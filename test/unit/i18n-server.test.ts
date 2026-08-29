@@ -203,10 +203,28 @@ describe("i18n data requests", () => {
   });
 });
 
+function dynamicSlugPage(label: string) {
+  return {
+    route: "/[slug]",
+    regexSource: "^/([^/]+)/?$",
+    params: [{ name: "slug", kind: "single" as const }],
+    id: 2,
+    kind: "page" as const,
+    async load() {
+      return { default: () => createElement("p", { id: "page" }, label) };
+    },
+  };
+}
+
 describe("afterFiles rewrite phase order", () => {
-  it("lets a real page win over an afterFiles rewrite, but fires on a miss", async () => {
+  it("lets a static page win, preempts a dynamic route, and fires on a miss", async () => {
     const handler = createNextaneHandler({
-      routes: [labeledPage("/about", "ABOUT"), labeledPage("/team", "TEAM")],
+      // Order matters: a static page and a dynamic catch-all coexist.
+      routes: [
+        labeledPage("/about", "ABOUT"),
+        labeledPage("/team", "TEAM"),
+        dynamicSlugPage("SLUG"),
+      ],
       loadApp: null,
       loadDocument: null,
       loadError: null,
@@ -214,20 +232,31 @@ describe("afterFiles rewrite phase order", () => {
       config: {
         rewrites: [
           { source: "/about", destination: "/team" },
+          { source: "/rewrite-me", destination: "/team" },
           { source: "/virtual", destination: "/team" },
         ],
       },
     });
 
-    // A real /about page wins over the afterFiles rewrite to /team.
-    const page = await handler(new Request("https://nextane.test/about"), {
+    // A static /about page wins over the afterFiles rewrite to /team.
+    const staticWin = await handler(new Request("https://nextane.test/about"), {
       ASSETS: assets,
     });
-    const pageHtml = await page.text();
-    expect(pageHtml).toContain("ABOUT");
-    expect(pageHtml).not.toContain("TEAM");
+    const staticHtml = await staticWin.text();
+    expect(staticHtml).toContain("ABOUT");
+    expect(staticHtml).not.toContain("TEAM");
 
-    // A path with no page falls through to the afterFiles rewrite.
+    // `/rewrite-me` matches only the dynamic [slug] route, which an afterFiles
+    // rewrite preempts (static files > afterFiles > dynamic).
+    const dynamicLose = await handler(
+      new Request("https://nextane.test/rewrite-me"),
+      { ASSETS: assets },
+    );
+    const dynamicHtml = await dynamicLose.text();
+    expect(dynamicHtml).toContain("TEAM");
+    expect(dynamicHtml).not.toContain("SLUG");
+
+    // `/virtual` also matches [slug] and is rewritten to /team.
     const rewritten = await handler(
       new Request("https://nextane.test/virtual"),
       { ASSETS: assets },

@@ -2132,6 +2132,31 @@ export function createNextaneHandler(
         return proxyExternalRewrite(request, routing.external);
       }
       let match = matchRoute(manifest.routes, routing.pageUrl.pathname);
+      // Next.js phase order is static files > `afterFiles` rewrites > dynamic
+      // routes: an afterFiles rewrite preempts a dynamic-route match or a miss,
+      // but never a static page.
+      const matchedStaticPage = !!match && match.route.params.length === 0;
+      if (!matchedStaticPage && !presetRouting && afterFilesRewrites.length > 0) {
+        const afterFiles = resolveRewrite(
+          afterFilesRewrites,
+          routingUrl,
+          ruleContext,
+          localizedPathname,
+        );
+        if (afterFiles.external) {
+          return proxyExternalRewrite(request, afterFiles.external);
+        }
+        if (afterFiles.matched) {
+          const afterMatch = matchRoute(
+            manifest.routes,
+            afterFiles.pageUrl.pathname,
+          );
+          if (afterMatch) {
+            match = afterMatch;
+            routing = afterFiles;
+          }
+        }
+      }
       if (!match) {
         // A `beforeFiles` rewrite may target a static/public file (e.g. a
         // locale-stripping rewrite to a public asset); serve it if present.
@@ -2143,29 +2168,6 @@ export function createNextaneHandler(
             new Request(routing.pageUrl, request),
           );
           if (asset.status !== 404) return asset;
-        }
-        // `afterFiles` rewrites run only now, after no page matched, so a real
-        // page always wins over an afterFiles rewrite (Next.js phase order).
-        if (!presetRouting && afterFilesRewrites.length > 0) {
-          const afterFiles = resolveRewrite(
-            afterFilesRewrites,
-            routingUrl,
-            ruleContext,
-            localizedPathname,
-          );
-          if (afterFiles.external) {
-            return proxyExternalRewrite(request, afterFiles.external);
-          }
-          if (afterFiles.matched) {
-            const afterMatch = matchRoute(
-              manifest.routes,
-              afterFiles.pageUrl.pathname,
-            );
-            if (afterMatch) {
-              match = afterMatch;
-              routing = afterFiles;
-            }
-          }
         }
         // Still no route matched: try the `fallback` rewrite phase.
         if (!match && fallbackRewrites.length > 0) {
