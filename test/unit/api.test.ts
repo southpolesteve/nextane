@@ -513,3 +513,49 @@ describe("Pages Router API routes", () => {
     expect(response.headers.get("cache-control")).toBe("public, max-age=60");
   });
 });
+
+describe("API response edge cases", () => {
+  it("returns 400 Invalid JSON for a malformed JSON body", async () => {
+    const response = await runApiRoute(
+      { default(_req: unknown, res: { json(v: unknown): void }) { res.json({ ok: true }); } },
+      new Request("https://nextane.test/api/x", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"a":',
+      }),
+      {},
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid JSON");
+  });
+
+  it("does not crash when a null-body status carries a body", async () => {
+    const response = await runApiRoute(
+      {
+        default(
+          _req: unknown,
+          res: { status(code: number): { json(v: unknown): void } },
+        ) {
+          res.status(204).json({ ignored: true });
+        },
+      },
+      new Request("https://nextane.test/api/x"),
+      {},
+    );
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+  });
+
+  it("send(null) yields an empty body without a JSON content type", async () => {
+    const response = await runApiRoute(
+      { default(_req: unknown, res: { send(v: unknown): void }) { res.send(null); } },
+      new Request("https://nextane.test/api/x"),
+      {},
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(response.headers.get("content-type") ?? "").not.toContain(
+      "application/json",
+    );
+  });
+});

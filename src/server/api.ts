@@ -237,6 +237,11 @@ class ApiResponse<Data = unknown> implements NextApiResponse<Data> {
   }
 
   send(data: Data | string | Uint8Array) {
+    // Next.js sends an empty body for null/undefined (no JSON serialization).
+    if (data === null || data === undefined) {
+      this.end();
+      return;
+    }
     if (typeof data === "object" && !(data instanceof Uint8Array)) {
       this.json(data);
       return;
@@ -309,7 +314,14 @@ class ApiResponse<Data = unknown> implements NextApiResponse<Data> {
       body.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    this.#response = new Response(size > 0 ? body : null, {
+    // 204/205/304/101 are null-body statuses: the Response constructor throws
+    // if given a body, so drop it (matching Next, which ignores the body).
+    const nullBodyStatus =
+      this.statusCode === 101 ||
+      this.statusCode === 204 ||
+      this.statusCode === 205 ||
+      this.statusCode === 304;
+    this.#response = new Response(size > 0 && !nullBodyStatus ? body : null, {
       status: this.statusCode,
       statusText: this.statusMessage,
       headers: this.#headers,
@@ -388,6 +400,17 @@ export async function runApiRoute(
       if (error instanceof ApiBodyTooLargeError) {
         return new Response(error.message, {
           status: error.statusCode,
+          headers: {
+            "cache-control": "private, no-store",
+            "content-type": "text/plain; charset=utf-8",
+          },
+        });
+      }
+      // A malformed JSON body is a client error (400), not a server crash,
+      // matching Next.js's "Invalid JSON" response.
+      if (error instanceof SyntaxError) {
+        return new Response("Invalid JSON", {
+          status: 400,
           headers: {
             "cache-control": "private, no-store",
             "content-type": "text/plain; charset=utf-8",

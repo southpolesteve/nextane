@@ -149,6 +149,24 @@ function dataUrl(url: URL, buildId: string): string {
   return `${basePath}/_next/data/${buildId}${pathname}.json${url.search}`;
 }
 
+/**
+ * Strip a leading configured-locale segment so the locale-agnostic client route
+ * table matches. Non-default locales are served at a `/{locale}` prefix, but the
+ * route regexes carry no locale, so `/fr/about` must match against `/about`. The
+ * locale-included path is still used for the `/_next/data` request.
+ */
+function stripLocaleSegment(pathname: string): string {
+  const locales = initialData.locales;
+  if (!locales || locales.length === 0) return pathname;
+  const firstSlash = pathname.indexOf("/", 1);
+  const firstSegment =
+    firstSlash === -1 ? pathname.slice(1) : pathname.slice(1, firstSlash);
+  if (locales.some((locale) => locale.toLowerCase() === firstSegment.toLowerCase())) {
+    return firstSlash === -1 ? "/" : pathname.slice(firstSlash);
+  }
+  return pathname;
+}
+
 async function loadNavigation(url: URL) {
   if ((url.pathname.replace(/\/+$/, "") || "/") === "/_error") {
     // Next exposes /_error as a pushable route that renders the app's error
@@ -166,7 +184,7 @@ async function loadNavigation(url: URL) {
       payload: { notFound: true } as PageDataPayload,
     };
   }
-  const match = matchRoute(routes, url.pathname);
+  const match = matchRoute(routes, stripLocaleSegment(url.pathname));
   if (!match) return null;
   const loader = pageLoaders[match.route.route];
   if (!loader) return null;
@@ -235,6 +253,32 @@ function cancelActiveNavigation() {
   activeNavigation = null;
 }
 
+/**
+ * Scroll to a URL fragment the way Next.js does: by element id (then by name),
+ * decoding the fragment, treating an empty hash and `#top` as scroll-to-top, and
+ * using getElementById rather than querySelector so a valid HTML id that is not a
+ * valid CSS selector (e.g. `id="42"`) never throws.
+ */
+function scrollToHash(hash: string) {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (raw === "" || raw.toLowerCase() === "top") {
+    window.scrollTo(0, 0);
+    return;
+  }
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    // Keep the raw fragment if it is not valid percent-encoding.
+  }
+  const target =
+    document.getElementById(decoded) ??
+    document.getElementById(raw) ??
+    document.getElementsByName(decoded)[0] ??
+    document.getElementsByName(raw)[0];
+  target?.scrollIntoView();
+}
+
 async function navigate(
   href: string,
   mode: "push" | "replace",
@@ -285,7 +329,7 @@ async function navigate(
       Router.events.emit("hashChangeStart", eventUrl, { shallow });
       if (mode === "replace") window.history.replaceState(state, "", browserUrl);
       else window.history.pushState(state, "", browserUrl);
-      document.querySelector(url.hash)?.scrollIntoView();
+      if (options.scroll !== false) scrollToHash(url.hash);
       Router.events.emit("hashChangeComplete", eventUrl, { shallow });
       return true;
     }
@@ -344,11 +388,18 @@ async function navigate(
 
     const notFound = loaded.payload.notFound === true;
     const notFoundLoader = pageLoaders["/404"];
-    const nextPageModule = notFound
-      ? notFoundLoader
+    let nextPageModule: PageModule;
+    if (notFound) {
+      nextPageModule = notFoundLoader
         ? ((await notFoundLoader()) as unknown as PageModule)
-        : ({ default: DefaultNotFound } satisfies PageModule)
-      : loaded.pageModule;
+        : ({ default: DefaultNotFound } satisfies PageModule);
+      // Importing the /404 chunk may have taken long enough for a newer
+      // navigation to supersede this one; a cancelled navigation must not
+      // render or emit a completion event.
+      if (navigation.cancelled) return false;
+    } else {
+      nextPageModule = loaded.pageModule;
+    }
     const pageProps = notFound
       ? { statusCode: 404 }
       : loaded.payload.pageProps ?? {};

@@ -114,13 +114,29 @@ function compileSource(source: string): { pattern: RegExp; names: string[] } {
   let pattern = "^";
   let cursor = 0;
   for (const parameter of sourceParameters(source)) {
-    pattern += escapeRegex(source.slice(cursor, parameter.index));
+    const literal = source.slice(cursor, parameter.index);
+    const modifier = parameter.modifier;
     names.push(parameter.name);
-    if (parameter.pattern !== undefined) pattern += `(${parameter.pattern})`;
-    else if (parameter.modifier === "+") pattern += "(.+)";
-    else if (parameter.modifier === "*") pattern += "(.*)";
-    else if (parameter.modifier === "?") pattern += "([^/]*)";
-    else pattern += "([^/]+)";
+    // path-to-regexp folds the delimiter before an optional/repeatable-optional
+    // param (`?`/`*`) into the optional group, so the whole `/segment` is
+    // optional and the parent path matches when the param is absent
+    // (e.g. `/blog/:slug*` matches `/blog`).
+    const foldDelimiter =
+      (modifier === "*" || modifier === "?") && literal.endsWith("/");
+    pattern += escapeRegex(foldDelimiter ? literal.slice(0, -1) : literal);
+    const capture =
+      parameter.pattern !== undefined
+        ? `(${parameter.pattern})`
+        : modifier === "+"
+          ? "(.+)"
+          : modifier === "*"
+            ? "(.*)"
+            : modifier === "?"
+              ? foldDelimiter
+                ? "([^/]+)"
+                : "([^/]*)"
+              : "([^/]+)";
+    pattern += foldDelimiter ? `(?:/${capture})?` : capture;
     cursor = parameter.index + parameter.length;
   }
   pattern += `${escapeRegex(source.slice(cursor))}/?$`;
@@ -186,7 +202,16 @@ function matchCondition(
   if (condition.type === "host" && condition.value === undefined) {
     return false;
   }
-  if (condition.value === undefined) return values.length > 0;
+  if (values.length === 0) return false;
+  // Next evaluates a repeated query parameter by its last value only.
+  const value = values[values.length - 1];
+
+  if (condition.value === undefined) {
+    // A value-less condition exposes the matched value under its key so it can
+    // be interpolated into the destination, matching Next's matchHas.
+    if (condition.key !== undefined) captured[condition.key] = value;
+    return true;
+  }
 
   let pattern: RegExp | null = null;
   try {
@@ -194,22 +219,17 @@ function matchCondition(
   } catch {
     pattern = null;
   }
-  for (const value of values) {
-    if (pattern) {
-      const matched = pattern.exec(value);
-      if (matched) {
-        for (const [name, groupValue] of Object.entries(
-          matched.groups ?? {},
-        )) {
-          if (groupValue !== undefined) captured[name] = groupValue;
-        }
-        return true;
+  if (pattern) {
+    const matched = pattern.exec(value);
+    if (matched) {
+      for (const [name, groupValue] of Object.entries(matched.groups ?? {})) {
+        if (groupValue !== undefined) captured[name] = groupValue;
       }
-    } else if (value === condition.value) {
       return true;
     }
+    return false;
   }
-  return false;
+  return value === condition.value;
 }
 
 export function evaluateRuleConditions(
@@ -261,9 +281,17 @@ export function substituteDestination(
   const queryPart = queryIndex === -1 ? "" : destination.slice(queryIndex);
 
   const substitutedPath = pathPart.replace(
-    /:([A-Za-z0-9_]+)[+*?]?/g,
-    (token, name: string) =>
-      name in values ? encodePathSegments(values[name]) : token,
+    /(\/?):([A-Za-z0-9_]+)([+*?]?)/g,
+    (token, slash: string, name: string, modifier: string) => {
+      if (!(name in values)) return token;
+      const value = values[name];
+      // Drop the whole `/segment` for an absent optional/catch-all param, so
+      // `/news/:slug*` becomes `/news` (not `/news/`) when slug is empty.
+      if (value === "" && slash === "/" && (modifier === "*" || modifier === "?")) {
+        return "";
+      }
+      return `${slash}${encodePathSegments(value)}`;
+    },
   );
   const substitutedQuery = queryPart.replace(
     /:([A-Za-z0-9_]+)[+*?]?/g,
