@@ -180,28 +180,36 @@ describe("i18n header rules", () => {
     expect(prefixed.headers.get("x-custom")).toBe("1");
   });
 
-  it("applies locale:false header rules to default-locale (unprefixed) requests", async () => {
+  it("matches locale:false header rules against the locale-inserted path", async () => {
     const handler = createNextaneHandler(
       i18nManifest({
         config: {
           i18n: { ...I18N },
           headers: [
             {
-              source: "/about",
+              source: "/:locale/about",
               locale: false,
-              headers: [{ key: "x-ignore-locale", value: "1" }],
+              headers: [{ key: "x-loc", value: "yes" }],
             },
           ],
         },
       }),
     );
 
-    // The default locale is served unprefixed, so a `locale: false` source must
-    // match the raw `/about` path — not a phantom `/en/about`.
+    // A `locale: false` source that spells out `:locale` matches every locale,
+    // including the default locale inserted for the unprefixed request — the
+    // same rule Next's `processRoutes` applies to redirects, rewrites, and
+    // headers alike.
     const dflt = await handler(new Request("https://nextane.test/about"), {
       ASSETS: assets,
     });
-    expect(dflt.headers.get("x-ignore-locale")).toBe("1");
+    expect(dflt.headers.get("x-loc")).toBe("yes");
+
+    const prefixed = await handler(
+      new Request("https://nextane.test/fr/about"),
+      { ASSETS: assets },
+    );
+    expect(prefixed.headers.get("x-loc")).toBe("yes");
   });
 });
 
