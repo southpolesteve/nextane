@@ -62,6 +62,76 @@ describe("client build security", () => {
     expect(transformed).not.toContain("serverCanary");
   });
 
+  it("strips a server-only import shadowed by a same-named client local", async () => {
+    const transformed = await createClientPageSource(
+      `
+        import { formatSecret } from "./server-only";
+        export const getServerSideProps = async () => ({
+          props: { s: formatSecret("SERVER_SEED") },
+        });
+        export default function Page({ items }) {
+          // A client local reuses the import's name; the component only ever
+          // calls this local, never the server-only import.
+          const formatSecret = (value) => value.toUpperCase();
+          return <p>{formatSecret(items[0])}</p>;
+        }
+      `,
+      "shadowed-import.tsrx",
+    );
+    // The server-only module must not leak in just because a client local
+    // happens to share the imported binding's name.
+    expect(transformed).not.toContain("./server-only");
+    expect(transformed).not.toContain("getServerSideProps");
+    expect(transformed).not.toContain("SERVER_SEED");
+    // The shadowing client local must survive so the component still works.
+    expect(transformed).toContain("value.toUpperCase()");
+    expect(transformed).toContain("default function Page");
+  });
+
+  it("keeps an import the client genuinely uses (shared with server code)", async () => {
+    const transformed = await createClientPageSource(
+      `
+        import { sharedFormat } from "./shared";
+        export const getServerSideProps = async () => ({
+          props: { s: sharedFormat("SEED") },
+        });
+        export default function Page({ items }) {
+          return <p>{sharedFormat(items[0])}</p>;
+        }
+      `,
+      "shared-import.tsrx",
+    );
+    // The client references the import at module scope (no shadow), so it must
+    // be preserved even though server code also uses it.
+    expect(transformed).toContain('from "./shared"');
+    expect(transformed).toContain("sharedFormat");
+    expect(transformed).not.toContain("getServerSideProps");
+  });
+
+  it("keeps an import used unshadowed in one scope even when shadowed in another", async () => {
+    const transformed = await createClientPageSource(
+      `
+        import { helper } from "./shared";
+        export const getServerSideProps = async () => ({
+          props: { s: helper("A") },
+        });
+        export default function Page() {
+          const outer = helper("B");
+          function inner() {
+            const helper = () => "local";
+            return helper();
+          }
+          return <p>{outer}{inner()}</p>;
+        }
+      `,
+      "mixed-shadow.tsrx",
+    );
+    // `helper("B")` is a real, unshadowed use of the import; a nested shadow in
+    // `inner` must not cause the import to be dropped.
+    expect(transformed).toContain('from "./shared"');
+    expect(transformed).toContain('helper("B")');
+  });
+
   it("keeps a non-exported local that shares a reserved server-export name", async () => {
     const transformed = await createClientPageSource(
       `
