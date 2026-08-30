@@ -229,6 +229,93 @@ function declarationNames(node: AstNode): string[] {
   return bindingNames(astNode(node.id));
 }
 
+function statementBindsName(statement: AstNode, name: string): boolean {
+  const declaration =
+    statement.type === "ExportNamedDeclaration"
+      ? astNode(statement.declaration)
+      : statement;
+  if (!declaration) return false;
+  if (
+    declaration.type === "VariableDeclaration" ||
+    declaration.type === "FunctionDeclaration" ||
+    declaration.type === "ClassDeclaration"
+  ) {
+    return declarationNames(declaration).includes(name);
+  }
+  return false;
+}
+
+// Whether `node` introduces a lexical scope that binds `name` directly: a
+// function/arrow's params (or a function expression's own name), a catch
+// param, a for-head declaration, or a block's own direct declarations. Used to
+// tell a reference to an imported binding apart from a same-named local that
+// shadows it.
+function scopeBindsName(node: AstNode, name: string): boolean {
+  if (
+    node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression"
+  ) {
+    const id = astNode(node.id);
+    if (id && id.name === name) return true;
+    if (Array.isArray(node.params)) {
+      for (const value of node.params) {
+        const param = astNode(value);
+        if (param && bindingNames(param).includes(name)) return true;
+      }
+    }
+    return false;
+  }
+  if (node.type === "CatchClause") {
+    const param = astNode(node.param);
+    return param ? bindingNames(param).includes(name) : false;
+  }
+  if (
+    node.type === "ForStatement" ||
+    node.type === "ForInStatement" ||
+    node.type === "ForOfStatement"
+  ) {
+    const head = astNode(node.init) ?? astNode(node.left);
+    return head?.type === "VariableDeclaration"
+      ? declarationNames(head).includes(name)
+      : false;
+  }
+  if (node.type === "BlockStatement" || node.type === "StaticBlock") {
+    const body = Array.isArray(node.body) ? node.body : [];
+    return body.some((value) => {
+      const statement = astNode(value);
+      return statement ? statementBindsName(statement, name) : false;
+    });
+  }
+  return false;
+}
+
+// Whether `name` is referenced anywhere in `node` at a position where it still
+// resolves to the outer (module-level import) binding — i.e. not shadowed by an
+// intervening local scope. Conservative by construction: a reference is treated
+// as shadowed only when a real binding of `name` is found in an enclosing
+// scope, so a genuinely-used import is never reported as unused (which would
+// wrongly strip it from the client bundle). Missing a shadow only keeps an
+// import that could have been dropped — safe, never a leak of a used binding.
+function hasUnshadowedReference(
+  node: AstNode,
+  name: string,
+  shadowed: boolean,
+): boolean {
+  const innerShadowed = shadowed || scopeBindsName(node, name);
+  if (
+    !innerShadowed &&
+    (node.type === "Identifier" || node.type === "JSXIdentifier") &&
+    node.name === name
+  ) {
+    return true;
+  }
+  for (const child of childNodes(node)) {
+    if (hasUnshadowedReference(child, name, innerShadowed)) return true;
+  }
+  return false;
+}
+
 function declarationFromStatement(node: AstNode): AstNode | null {
   if (node.type === "ExportNamedDeclaration") {
     return astNode(node.declaration);
@@ -527,6 +614,22 @@ export async function createClientPageSource(
     new Set(clientRootNodes.flatMap((root) => [...collectIdentifiers(root)])),
     declarations,
   );
+  // Nodes that survive into the client bundle: the client roots plus the
+  // module-level declarations they reach. An import is genuinely used by the
+  // client only when one of these references its name at a scope where the
+  // import binding is still visible (see hasUnshadowedReference).
+  const clientRegionNodes = [
+    ...clientRootNodes,
+    ...declarations
+      .filter((declaration) =>
+        declaration.names.some((name) => clientReferences.has(name)),
+      )
+      .map((declaration) => declaration.node),
+  ];
+  const clientUsesImport = (name: string): boolean =>
+    clientRegionNodes.some((node) =>
+      hasUnshadowedReference(node, name, false),
+    );
 
   const dependencyEdits: TextEdit[] = [];
   for (const declaration of declarations) {
@@ -558,11 +661,11 @@ export async function createClientPageSource(
     if (specifiers.length === 0) continue;
     const kept = specifiers.filter((specifier) => {
       const name = importSpecifierName(specifier);
-      return (
-        !name ||
-        !serverReferences.has(name) ||
-        clientReferences.has(name)
-      );
+      // Keep the import unless it is server-referenced AND the client never
+      // uses it at a scope where its binding is visible. A same-named client
+      // local no longer counts as a use, so a server-only import stops leaking
+      // into the browser bundle when a client scope reuses its name.
+      return !name || !serverReferences.has(name) || clientUsesImport(name);
     });
     if (kept.length === specifiers.length) continue;
     dependencyEdits.push({
