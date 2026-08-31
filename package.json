@@ -97,18 +97,18 @@
     }
   },
   "dependencies": {
-    "@octanejs/vite-plugin": "0.1.21",
-    "octane": "0.1.21"
+    "@octanejs/vite-plugin": "0.1.49",
+    "octane": "0.1.49"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.49.0",
-    "@cloudflare/workers-types": "5.20260730.1",
+    "@cloudflare/vite-plugin": "1.54.2",
+    "@cloudflare/workers-types": "5.20260828.1",
     "@playwright/test": "1.62.1",
-    "@types/node": "26.1.2",
+    "@types/node": "26.4.0",
     "typescript": "7.0.2",
-    "vite": "8.2.0",
-    "vitest": "4.1.10",
-    "wrangler": "4.116.0"
+    "vite": "8.2.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.127.1"
   },
   "overrides": {
     "undici": "7.29.0",
