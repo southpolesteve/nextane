@@ -452,6 +452,21 @@ export async function adaptFixture({
     );
   }
 
+  // Some fixtures ship files Nextane refuses at build time (a no-op
+  // middleware.js, say). A profile may list them for removal; each path is
+  // confined to the fixture and reported so the adaptation stays reviewable.
+  const removed = [];
+  for (const relative of profile.removeFiles ?? []) {
+    const target = path.join(fixtureRoot, relative);
+    if (!isInside(fixtureRoot, target)) {
+      throw new Error(`Refusing to remove ${relative}: outside the fixture`);
+    }
+    if (await exists(target)) {
+      await fs.rm(target, { recursive: true, force: true });
+      removed.push(relative);
+    }
+  }
+
   const renames = await renameComponentSources(fixtureRoot, profile);
   await rewriteSources(fixtureRoot, renames, profile);
   const overlays = await copyOverlay(repositoryRoot, profile, fixtureRoot);
@@ -466,6 +481,7 @@ export async function adaptFixture({
       to: path.relative(fixtureRoot, to),
     })),
     overlays,
+    removed,
     warmupPaths: profile.warmupPaths ?? [],
   };
   await fs.writeFile(

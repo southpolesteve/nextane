@@ -20,7 +20,7 @@ checkout can omit `NEXTANE_NEXT_VERSION`:
 npm run test:upstream -- /absolute/path/to/next.js
 ```
 
-The 43 selected test files are:
+The 44 selected test files are:
 
 - `test/e2e/hello-world/hello-world.test.ts`
 - `test/e2e/404-page-router/index.test.ts`
@@ -63,6 +63,7 @@ The 43 selected test files are:
 - `test/e2e/i18n-ignore-redirect-source-locale/redirects.test.ts`
 - `test/e2e/i18n-ignore-redirect-source-locale/redirects-with-basepath.test.ts`
 - `test/e2e/i18n-default-locale-redirect/i18n-default-locale-redirect.test.ts`
+- `test/e2e/i18n-preferred-locale-detection/i18n-preferred-locale-detection.test.ts`
 - `test/e2e/useselectedlayoutsegment-s-in-pages-router/useselectedlayoutsegment-s-in-pages-router.test.ts`
 - `test/e2e/prerender.test.ts`
 

@@ -12,7 +12,9 @@ import {
   hasBasePath,
   stripBasePath,
 } from "../runtime/navigation";
-import { addLocalePrefix, resolveLocale, type I18nConfig } from "./i18n";
+import { addLocalePrefix, resolveLocale, type I18nConfig,
+  localeDetectionRedirect,
+} from "./i18n.ts";
 import { matchRoute } from "../routing/match";
 import type { ClientRoute } from "../routing/types";
 import type {
@@ -1906,9 +1908,11 @@ export function createNextaneHandler(
       // rules whose sources spell out the `:locale` segment.
       const routingUrl = new URL(url);
       let locale = i18n?.defaultLocale;
+      let hadLocalePrefix = false;
       if (i18n && !url.pathname.startsWith("/_next/")) {
         const resolution = resolveLocale(url.pathname, i18n);
         locale = resolution.locale;
+        hadLocalePrefix = resolution.hadLocalePrefix;
         routingUrl.pathname = resolution.pathname;
       }
       const localizedPathname =
@@ -1921,6 +1925,31 @@ export function createNextaneHandler(
         headers: request.headers,
         cookies: parseCookies(request.headers.get("cookie")),
       };
+      // Next.js root-path locale detection runs before any routing or config
+      // redirect (router-server -> getLocaleRedirect): a bare "/" with no
+      // locale prefix is sent to `${basePath}/{locale}` when the NEXT_LOCALE
+      // cookie or Accept-Language selects a non-default locale. Next's
+      // removePathPrefix leaves an unprefixed "/" untouched, so the root is
+      // redirected into the basePath whether or not the request carried it.
+      // `/{locale}` itself is not "/", so the redirect cannot loop.
+      if (i18n && !url.pathname.startsWith("/_next/")) {
+        const location = localeDetectionRedirect({
+          pathname: routingUrl.pathname,
+          hadLocalePrefix,
+          nextLocaleCookie: ruleContext.cookies.NEXT_LOCALE,
+          acceptLanguageHeader: request.headers.get("accept-language"),
+          i18n,
+          basePath,
+          trailingSlash: manifest.config?.trailingSlash === true,
+          search: url.search,
+        });
+        if (location) {
+          return new Response(null, {
+            status: 307,
+            headers: { location, "cache-control": "private, no-store" },
+          });
+        }
+      }
       // Config redirects run before filesystem/static serving, matching
       // Next.js: a redirect source wins over a same-path public file.
       if (!url.pathname.startsWith("/_next/")) {

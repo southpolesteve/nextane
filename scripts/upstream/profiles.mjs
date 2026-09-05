@@ -224,6 +224,19 @@ export const upstreamSmokeSuites = [
     ],
   },
   {
+    id: "i18n-preferred-locale-detection",
+    testFile:
+      "test/e2e/i18n-preferred-locale-detection/i18n-preferred-locale-detection.test.ts",
+    // middleware.js keeps this profile from claiming the
+    // i18n-default-locale-redirect fixture, which shares pages/new.js and
+    // pages/index.js; on this fixture the more specific match wins.
+    signatures: ["middleware.js", "pages/new.js", "pages/index.js"],
+    // The fixture's root middleware.js is a literal no-op and the tests never
+    // observe it; Nextane fails closed on middleware, so drop it pre-build.
+    removeFiles: ["middleware.js"],
+    warmupPaths: ["/new", "/id/new"],
+  },
+  {
     id: "prerender",
     testFile: "test/e2e/prerender.test.ts",
     signatures: [

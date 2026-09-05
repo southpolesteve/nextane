@@ -19,7 +19,7 @@ larger Next.js Pages Router compatibility claim.
 | Routing config | Working slice | `redirects()`/`headers()`/`rewrites()` with `has`/`missing` conditions, `:param(pattern)` sources, case-insensitive matching, external rewrite proxying, `beforeFiles`/`afterFiles`/`fallback` phase order, `basePath: false`/`locale: false` variants |
 | basePath | Working slice | prefixed pages/assets/data routes, outside-prefix 404s, prefixed router events and history, `router.basePath`, Link prefixing, trailing-slash interplay |
 | assetPrefix | Working slice | prefixed `_next` and hashed chunk serving, prefixed build manifest, plain-text asset 404s |
-| i18n | Working slice | locale-prefixed routing with an unprefixed default locale, locale-strip before dynamic matching, `locale: false` rewrites/redirects with default-locale insertion, active-locale preservation on internal redirects, header rules applied across locales, per-locale static/ISR artifact caching, locale-prefixed `/_next/data` routes, `router.locale`/`locales`/`defaultLocale` and locale in `getStaticProps`/`getServerSideProps`, `/api` served unprefixed |
+| i18n | Working slice | locale-prefixed routing with an unprefixed default locale, locale-strip before dynamic matching, `locale: false` rewrites/redirects with default-locale insertion, root-path `localeDetection` redirects (`NEXT_LOCALE` cookie / Accept-Language q-negotiation, `localeDetection: false` opt-out), active-locale preservation on internal redirects, header rules applied across locales, per-locale static/ISR artifact caching, locale-prefixed `/_next/data` routes, `router.locale`/`locales`/`defaultLocale` and locale in `getStaticProps`/`getServerSideProps`, `/api` served unprefixed |
 | Page data | Working slice | `/_next/data/:buildId/*.json` for static and server props |
 | ISR | Working slice | shared render artifact, numeric revalidation, Workers Cache SWR |
 | URL policy | Working slice | `trailingSlash` redirects, SSR links, client navigation, dotted paths, and query strings |
@@ -31,8 +31,7 @@ larger Next.js Pages Router compatibility claim.
   fallback routes are generated through the shared runtime artifact cache
 - broader Node `IncomingMessage`/`ServerResponse` compatibility beyond the
   exercised Pages data and API surfaces
-- middleware, i18n `domains` routing, and Accept-Language/`NEXT_LOCALE`
-  locale-detection redirects (`localeDetection`)
+- middleware and i18n `domains` routing
 - `next/image`, `next/script`, `next/font`, and other framework components
 - exact shallow-routing semantics and scroll restoration
 - advanced API behavior such as response-size warnings, streaming, and external
@@ -122,7 +121,7 @@ result is **373/374 substantive test cases, plus twelve deploy-mode
 sentinels, one environment-limited external-rewrite failure, and three
 skips** — not 385 substantive test cases.
 
-The selected files are the 43 listed in
+The selected files are the 44 listed in
 [`scripts/upstream/README.md`](../scripts/upstream/README.md).
 
 Run the exact filtered harness with a prepared v16.2.2 checkout:

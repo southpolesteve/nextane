@@ -175,4 +175,31 @@ describe("upstream fixture adaptation", () => {
       "no supported profile matched",
     );
   });
+  it("removes profile-listed files before adapting and reports them", async () => {
+    const root = await fixture({
+      "middleware.js": "export async function middleware() {}\n",
+      "pages/index.js": "export default () => <p>index</p>\n",
+      "pages/new.js": "export default () => <p>new</p>\n",
+    });
+
+    const report = await adaptFixture({ root, nextaneRoot });
+
+    expect(report.profile).toBe("i18n-preferred-locale-detection");
+    expect(report.removed).toEqual(["middleware.js"]);
+    await expect(fs.access(path.join(root, "middleware.js"))).rejects.toThrow();
+    // The pages survive and are migrated as usual.
+    await fs.access(path.join(root, "pages/index.tsrx"));
+  });
+
+  it("keeps the sibling i18n-default-locale-redirect fixture on its own profile", async () => {
+    const root = await fixture({
+      "pages/index.js": "export default () => <p>index</p>\n",
+      "pages/new.js": "export default () => <p>new</p>\n",
+    });
+
+    const report = await adaptFixture({ root, nextaneRoot });
+
+    expect(report.profile).toBe("i18n-default-locale-redirect");
+    expect(report.removed).toEqual([]);
+  });
 });
