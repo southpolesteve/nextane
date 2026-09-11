@@ -101,14 +101,14 @@
     "octane": "0.1.21"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.49.0",
+    "@cloudflare/vite-plugin": "1.54.7",
     "@cloudflare/workers-types": "5.20260730.1",
     "@playwright/test": "1.62.1",
     "@types/node": "26.1.2",
     "typescript": "7.0.2",
     "vite": "8.2.0",
     "vitest": "4.1.10",
-    "wrangler": "4.116.0"
+    "wrangler": "4.131.0"
   },
   "overrides": {
     "undici": "7.29.0",
